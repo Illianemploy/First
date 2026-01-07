@@ -3,8 +3,7 @@
 **A comprehensive smoking cessation tool** - A premium, Uber-style Android app that combines real-time UK tobacco pricing with powerful anti-smoking features including global price comparison, personal expenditure tracking, travel arbitrage calculations, and live awareness statistics. Designed to help people understand the true cost of smoking and make informed decisions about quitting.
 
 ## 🎯 Mission
-
-**Truth Through Transparency** - This app serves a better purpose for humanity by providing maximum truth-seeking information about tobacco's real costs - financial, health, and social. Every feature is designed to empower users with data to make informed decisions about quitting smoking.
+Every feature is designed to empower users with data to make informed decisions about quitting smoking.
 
 ## ✨ Key Features
 

@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.collectLatest
 import java.text.NumberFormat
 import java.util.*
 
+@OptIn(ExperimentalAnimationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun AwarenessScreen() {
     var showDeathTicker by remember { mutableStateOf(true) }

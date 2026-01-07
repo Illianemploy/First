@@ -15,7 +15,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.uktobacco.data.CountryPricing
@@ -24,6 +26,7 @@ import com.uktobacco.data.Region
 import com.uktobacco.ui.theme.UberGreen
 import com.uktobacco.ui.theme.UberTextSecondary
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GlobalPricesScreen() {
     var selectedRegion by remember { mutableStateOf<Region?>(null) }
@@ -161,7 +164,7 @@ fun GlobalPricesScreen() {
         // Countries list
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = 20.dp, bottom = 20.dp),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             items(countries, key = { it.countryCode }) { country ->
@@ -331,4 +334,24 @@ private enum class SortOption(val label: String) {
     TAX_HIGH_LOW("Tax: High-Low"),
     TAX_LOW_HIGH("Tax: Low-High"),
     ALPHABETICAL("A-Z")
+}
+
+@Composable
+private fun DetailRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = UberTextSecondary,
+            fontWeight = FontWeight.Medium
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
 }

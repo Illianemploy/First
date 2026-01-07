@@ -31,7 +31,8 @@ data class UiState(
     val selectedRetailer: String? = null,
     val sortOption: SortOption = SortOption.PRICE_LOW_TO_HIGH,
     val isLoading: Boolean = true,
-    val availableRetailers: List<String> = emptyList()
+    val availableRetailers: List<String> = emptyList(),
+    val favorites: Set<String> = emptySet()
 )
 
 class TobaccoViewModel : ViewModel() {
@@ -142,5 +143,28 @@ class TobaccoViewModel : ViewModel() {
             )
         }
         applyFiltersAndSort()
+    }
+
+    fun toggleFavorite(productId: String) {
+        _uiState.update { state ->
+            val newFavorites = if (productId in state.favorites) {
+                state.favorites - productId
+            } else {
+                state.favorites + productId
+            }
+            state.copy(favorites = newFavorites)
+        }
+    }
+
+    fun isFavorite(productId: String): Boolean {
+        return productId in _uiState.value.favorites
+    }
+
+    fun getFavoriteProducts(): List<TobaccoProduct> {
+        return _uiState.value.products.filter { it.id in _uiState.value.favorites }
+    }
+
+    fun getProductById(productId: String): TobaccoProduct? {
+        return _uiState.value.products.find { it.id == productId }
     }
 }

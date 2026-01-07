@@ -28,7 +28,10 @@ sealed class Screen(val route: String) {
 
 @OptIn(ExperimentalAnimationApi::class)
 @Composable
-fun AppNavigation(navController: NavHostController) {
+fun AppNavigation(
+    navController: NavHostController,
+    viewModel: com.uktobacco.TobaccoViewModel
+) {
     NavHost(
         navController = navController,
         startDestination = Screen.Home.route,
@@ -64,7 +67,8 @@ fun AppNavigation(navController: NavHostController) {
                 },
                 onBrandClick = { brandName ->
                     navController.navigate(Screen.CompanyHistory.createRoute(brandName))
-                }
+                },
+                viewModel = viewModel
             )
         }
 
@@ -80,7 +84,8 @@ fun AppNavigation(navController: NavHostController) {
             FavoritesScreen(
                 onProductClick = { productId ->
                     navController.navigate(Screen.ProductDetail.createRoute(productId))
-                }
+                },
+                viewModel = viewModel
             )
         }
 
@@ -100,8 +105,10 @@ fun AppNavigation(navController: NavHostController) {
 
         composable(Screen.SmokingProfile.route) {
             SmokingProfileScreen(
-                currentProfile = null,
-                onProfileSaved = { /* TODO: Save to ViewModel */ }
+                currentProfile = viewModel.getSmokingProfile(),
+                onProfileSaved = { profile ->
+                    viewModel.updateSmokingProfile(profile)
+                }
             )
         }
 
@@ -123,7 +130,8 @@ fun AppNavigation(navController: NavHostController) {
                 onBackClick = { navController.popBackStack() },
                 onBrandClick = { brandName ->
                     navController.navigate(Screen.CompanyHistory.createRoute(brandName))
-                }
+                },
+                viewModel = viewModel
             )
         }
 

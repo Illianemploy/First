@@ -18,10 +18,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.uktobacco.data.ProfileDataStore
 import com.uktobacco.navigation.AppNavigation
 import com.uktobacco.navigation.Screen
 import com.uktobacco.ui.theme.UKTobaccoPricesTheme
@@ -50,6 +52,12 @@ fun TobaccoPricesApp() {
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
+
+    // Create ProfileDataStore and ViewModel with factory
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val profileDataStore = remember { ProfileDataStore(context) }
+    val viewModelFactory = remember { TobaccoViewModelFactory(profileDataStore) }
+    val viewModel: TobaccoViewModel = viewModel(factory = viewModelFactory)
 
     val bottomNavItems = listOf(
         BottomNavItem(Screen.Home, Icons.Filled.Home, "Home"),
@@ -132,7 +140,7 @@ fun TobaccoPricesApp() {
                 )
                 .background(MaterialTheme.colorScheme.background)
         ) {
-            AppNavigation(navController = navController)
+            AppNavigation(navController = navController, viewModel = viewModel)
         }
     }
 }

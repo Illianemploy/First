@@ -1,7 +1,9 @@
 package com.uktobacco
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.uktobacco.data.ProfileDataStore
 import com.uktobacco.data.SmokingProfile
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -37,7 +39,9 @@ data class UiState(
     val smokingProfile: SmokingProfile? = null
 )
 
-class TobaccoViewModel : ViewModel() {
+class TobaccoViewModel(
+    private val profileDataStore: ProfileDataStore
+) : ViewModel() {
 
     private val repository = TobaccoRepository()
 
@@ -47,6 +51,15 @@ class TobaccoViewModel : ViewModel() {
     init {
         loadProducts()
         observeRealtimeUpdates()
+        loadSmokingProfile()
+    }
+
+    private fun loadSmokingProfile() {
+        viewModelScope.launch {
+            profileDataStore.smokingProfileFlow.collect { profile ->
+                _uiState.update { it.copy(smokingProfile = profile) }
+            }
+        }
     }
 
     private fun loadProducts() {
@@ -171,10 +184,31 @@ class TobaccoViewModel : ViewModel() {
     }
 
     fun updateSmokingProfile(profile: SmokingProfile) {
-        _uiState.update { it.copy(smokingProfile = profile) }
+        viewModelScope.launch {
+            profileDataStore.saveProfile(profile)
+            // The profile will be updated via the flow in loadSmokingProfile()
+        }
+    }
+
+    fun clearSmokingProfile() {
+        viewModelScope.launch {
+            profileDataStore.clearProfile()
+        }
     }
 
     fun getSmokingProfile(): SmokingProfile? {
         return _uiState.value.smokingProfile
+    }
+}
+
+class TobaccoViewModelFactory(
+    private val profileDataStore: ProfileDataStore
+) : ViewModelProvider.Factory {
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        if (modelClass.isAssignableFrom(TobaccoViewModel::class.java)) {
+            return TobaccoViewModel(profileDataStore) as T
+        }
+        throw IllegalArgumentException("Unknown ViewModel class")
     }
 }

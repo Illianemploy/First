@@ -2,6 +2,7 @@ package com.uktobacco
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.uktobacco.data.SmokingProfile
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -32,7 +33,8 @@ data class UiState(
     val sortOption: SortOption = SortOption.PRICE_LOW_TO_HIGH,
     val isLoading: Boolean = true,
     val availableRetailers: List<String> = emptyList(),
-    val favorites: Set<String> = emptySet()
+    val favorites: Set<String> = emptySet(),
+    val smokingProfile: SmokingProfile? = null
 )
 
 class TobaccoViewModel : ViewModel() {
@@ -166,5 +168,13 @@ class TobaccoViewModel : ViewModel() {
 
     fun getProductById(productId: String): TobaccoProduct? {
         return _uiState.value.products.find { it.id == productId }
+    }
+
+    fun updateSmokingProfile(profile: SmokingProfile) {
+        _uiState.update { it.copy(smokingProfile = profile) }
+    }
+
+    fun getSmokingProfile(): SmokingProfile? {
+        return _uiState.value.smokingProfile
     }
 }

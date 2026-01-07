@@ -15,6 +15,9 @@ sealed class Screen(val route: String) {
     object Brands : Screen("brands")
     object Favorites : Screen("favorites")
     object Settings : Screen("settings")
+    object SmokingProfile : Screen("smoking_profile")
+    object GlobalPrices : Screen("global_prices")
+    object Awareness : Screen("awareness")
     object ProductDetail : Screen("product/{productId}") {
         fun createRoute(productId: String) = "product/$productId"
     }
@@ -82,7 +85,32 @@ fun AppNavigation(navController: NavHostController) {
         }
 
         composable(Screen.Settings.route) {
-            SettingsScreen()
+            SettingsScreen(
+                onNavigateToProfile = {
+                    navController.navigate(Screen.SmokingProfile.route)
+                },
+                onNavigateToGlobalPrices = {
+                    navController.navigate(Screen.GlobalPrices.route)
+                },
+                onNavigateToAwareness = {
+                    navController.navigate(Screen.Awareness.route)
+                }
+            )
+        }
+
+        composable(Screen.SmokingProfile.route) {
+            SmokingProfileScreen(
+                currentProfile = null,
+                onProfileSaved = { /* TODO: Save to ViewModel */ }
+            )
+        }
+
+        composable(Screen.GlobalPrices.route) {
+            GlobalPricesScreen()
+        }
+
+        composable(Screen.Awareness.route) {
+            AwarenessScreen()
         }
 
         composable(

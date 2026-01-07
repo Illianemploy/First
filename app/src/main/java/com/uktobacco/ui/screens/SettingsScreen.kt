@@ -19,7 +19,11 @@ import com.uktobacco.ui.theme.UberGreen
 import com.uktobacco.ui.theme.UberTextSecondary
 
 @Composable
-fun SettingsScreen() {
+fun SettingsScreen(
+    onNavigateToProfile: () -> Unit = {},
+    onNavigateToGlobalPrices: () -> Unit = {},
+    onNavigateToAwareness: () -> Unit = {}
+) {
     var notificationsEnabled by remember { mutableStateOf(true) }
     var autoRefreshEnabled by remember { mutableStateOf(true) }
 
@@ -66,6 +70,30 @@ fun SettingsScreen() {
             modifier = Modifier.padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // Anti-Smoking Tools section
+            SettingsSection(title = "Anti-Smoking Tools") {
+                SettingsItem(
+                    icon = Icons.Filled.Person,
+                    title = "Your Smoking Profile",
+                    description = "Calculate your personal cost of smoking",
+                    onClick = onNavigateToProfile
+                )
+
+                SettingsItem(
+                    icon = Icons.Filled.Public,
+                    title = "Global Tobacco Prices",
+                    description = "Compare prices and taxes worldwide",
+                    onClick = onNavigateToGlobalPrices
+                )
+
+                SettingsItem(
+                    icon = Icons.Filled.Warning,
+                    title = "Global Impact & Awareness",
+                    description = "Live statistics on tobacco's toll",
+                    onClick = onNavigateToAwareness
+                )
+            }
+
             // Preferences section
             SettingsSection(title = "Preferences") {
                 SettingsSwitchItem(

@@ -1,8 +1,40 @@
 # UK Tobacco Prices
 
-A premium, Uber-style Android app that aggregates and provides real-time pricing data for cigarettes and rolling tobacco across UK retailers. Features stunning 3D product visualizations, interactive gestures, and comprehensive brand histories.
+**A comprehensive smoking cessation tool** - A premium, Uber-style Android app that combines real-time UK tobacco pricing with powerful anti-smoking features including global price comparison, personal expenditure tracking, travel arbitrage calculations, and live awareness statistics. Designed to help people understand the true cost of smoking and make informed decisions about quitting.
+
+## 🎯 Mission
+
+**Truth Through Transparency** - This app serves a better purpose for humanity by providing maximum truth-seeking information about tobacco's real costs - financial, health, and social. Every feature is designed to empower users with data to make informed decisions about quitting smoking.
 
 ## ✨ Key Features
+
+### 💰 Personal Smoking Calculator
+- **Track Daily Usage**: Input cigarettes per day and price per pack
+- **Monthly & Yearly Costs**: Instant calculation of smoking expenditure
+- **30-Year Projection**: See lifetime financial impact
+- **Health Impact Metrics**: Life expectancy reduction, chemicals inhaled, tar consumption
+- **Motivational Insights**: Data-driven reality check on smoking costs
+
+### 🌍 Global Price Comparison
+- **23 Countries**: Comprehensive pricing data from Europe, North Africa, and Middle East
+- **Tax Transparency**: Exact tax rates and amounts for each country
+- **Regional Filtering**: Sort by Western Europe, Eastern Europe, Southern Europe, Northern Europe, North Africa, Middle East
+- **4-Hour Flight Radius**: Focus on realistically accessible countries from UK
+- **Price Differential Analysis**: Compare UK prices to worldwide alternatives
+
+### ✈️ Travel Arbitrage Calculator
+- **Bulk-Buy Savings Analysis**: Calculate if flying abroad to buy cigarettes saves money
+- **Flight Cost Integration**: Realistic return flight costs from UK
+- **Legal Limits**: Respects personal import limits per country (200-800 packs)
+- **Break-Even Analysis**: Shows months to recoup travel investment
+- **Smart Recommendations**: Only suggests trips with £50+ total savings
+
+### ⚠️ Live Awareness & Statistics
+- **Real-Time Death Counter**: WHO data showing global tobacco deaths (8M/year, ~15/minute)
+- **UK Expenditure Ticker**: Live counter of daily UK spending on tobacco (~£53M/day)
+- **Toggle Views**: Switch between death toll and economic cost
+- **Evidence-Based Facts**: Global impact, UK statistics, health effects
+- **Educational Resources**: Links to quitting support and information
 
 ### 🎨 Interactive 3D Product Viewer
 - **Spin & Rotate**: Touch and drag to rotate products in 3D space
@@ -45,10 +77,33 @@ A premium, Uber-style Android app that aggregates and provides real-time pricing
 - **Quick Access**: Dedicated Favorites tab in bottom navigation
 
 ### 🎯 Modern Navigation
-- **Bottom Navigation**: Easy access to Home, Brands, Favorites, and Settings
+- **Multi-Section App**: Home, Brands, Favorites, Settings, Profile, Global Prices, Awareness
 - **Smooth Transitions**: Page transitions with fade and slide animations
 - **Deep Linking**: Direct navigation to products and brand histories
 - **Smart Back Stack**: Intelligent navigation state management
+
+## 📊 Data & Statistics
+
+### Global Pricing Data
+- **23 Countries** with complete pricing and tax information
+- **Cheapest**: Tunisia (£2.50/pack, 55.6% tax)
+- **Most Expensive**: Ireland (£15.50/pack, 85.7% tax)
+- **UK Baseline**: £14.00/pack, 88.4% tax
+- **Price Range**: £2.50 - £15.50 across surveyed countries
+
+### Health Statistics (WHO Data)
+- **Global Deaths**: 8 million annually from tobacco
+- **UK Deaths**: 78,000 per year
+- **Per Minute**: ~15 deaths globally
+- **Life Cost**: Each cigarette reduces life expectancy by 11 minutes
+- **Chemicals**: 7,000+ in cigarette smoke, 69 known carcinogens
+
+### Economic Impact
+- **UK Smokers**: 6.9 million adults
+- **Daily UK Spending**: ~£53 million on tobacco
+- **Annual UK Spending**: ~£19.3 billion
+- **NHS Cost**: £2.5 billion annually treating smoking-related illness
+- **Average Smoker**: £2,800/year on cigarettes (20/day at £14/pack)
 
 ## Technology Stack
 
@@ -205,6 +260,33 @@ Immersive brand storytelling:
 - **Smooth Animations**: Events fade and slide in as you scroll
 
 ## 🎯 App Screens
+
+### Smoking Profile (NEW)
+- Input daily cigarette consumption
+- Set current pack price
+- View monthly and yearly costs
+- 30-year financial projection
+- Health impact calculations
+- Motivational messages
+
+### Global Prices (NEW)
+- 23 countries with complete data
+- Filter by 6 geographic regions
+- Sort by price or tax rate
+- Expandable country cards
+- Tax visualization bars
+- Price differential from UK
+- Flight time and cost info
+- Legal import limits
+
+### Awareness (NEW)
+- Toggle between death counter and UK expenditure
+- Real-time incrementing statistics
+- WHO-sourced data
+- Global and UK-specific facts
+- Health effects information
+- Data source transparency
+- Quitting resources
 
 ### Home
 - Product grid with enhanced cards

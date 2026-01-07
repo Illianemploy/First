@@ -93,7 +93,8 @@ fun FavoritesScreen(
                             product = product,
                             isFavorite = true,
                             onFavoriteClick = { viewModel.toggleFavorite(product.id) },
-                            onClick = { onProductClick(product.id) }
+                            onClick = { onProductClick(product.id) },
+                            smokingProfile = uiState.smokingProfile
                         )
                     }
                 }

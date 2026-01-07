@@ -24,6 +24,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.uktobacco.TobaccoType
 import com.uktobacco.TobaccoViewModel
 import com.uktobacco.ui.components.Product3DViewer
+import com.uktobacco.ui.components.TravelSavingsCard
 import com.uktobacco.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -38,6 +39,7 @@ fun ProductDetailScreen(
     val isFavorite by remember {
         derivedStateOf { viewModel.isFavorite(productId) }
     }
+    val smokingProfile = viewModel.getSmokingProfile()
 
     val scrollState = rememberScrollState()
     val headerCollapsed by remember {
@@ -279,6 +281,14 @@ fun ProductDetailScreen(
                             description = "Prices are updated in real-time from retailer sources"
                         )
                     }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Travel Savings Card
+                    TravelSavingsCard(
+                        product = product,
+                        smokingProfile = smokingProfile
+                    )
 
                     Spacer(modifier = Modifier.height(8.dp))
 

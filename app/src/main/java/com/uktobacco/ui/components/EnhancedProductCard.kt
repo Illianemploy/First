@@ -26,6 +26,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.uktobacco.TobaccoProduct
 import com.uktobacco.TobaccoType
+import com.uktobacco.data.SmokingProfile
+import com.uktobacco.data.TravelSavingsCalculator
 import com.uktobacco.ui.theme.CigaretteBlue
 import com.uktobacco.ui.theme.TobaccoOrange
 import com.uktobacco.ui.theme.UberGreen
@@ -40,8 +42,16 @@ fun EnhancedProductCard(
     isFavorite: Boolean = false,
     onFavoriteClick: () -> Unit = {},
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    smokingProfile: SmokingProfile? = null
 ) {
+    // Calculate best opportunity if smoking profile exists
+    val bestOpportunity = remember(smokingProfile) {
+        smokingProfile?.let { profile ->
+            TravelSavingsCalculator.findBestOpportunities(profile, monthsToSupply = 3)
+                .firstOrNull()
+        }
+    }
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
 
@@ -184,6 +194,15 @@ fun EnhancedProductCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(vertical = 8.dp)
                 )
+
+                // Best Deal Badge
+                if (bestOpportunity != null) {
+                    BestDealBadge(
+                        savings = bestOpportunity.totalSavings,
+                        countryName = bestOpportunity.country.countryName,
+                        modifier = Modifier.padding(vertical = 8.dp)
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(16.dp))
 

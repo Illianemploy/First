@@ -188,7 +188,8 @@ fun HomeScreen(
                         product = product,
                         isFavorite = viewModel.isFavorite(product.id),
                         onFavoriteClick = { viewModel.toggleFavorite(product.id) },
-                        onClick = { onProductClick(product.id) }
+                        onClick = { onProductClick(product.id) },
+                        smokingProfile = uiState.smokingProfile
                     )
                 }
 

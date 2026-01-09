@@ -20,17 +20,11 @@ enum class SortOption {
     LAST_UPDATED
 }
 
-enum class FilterType {
-    ALL,
-    CIGARETTES,
-    ROLLING_TOBACCO
-}
-
 data class UiState(
     val products: List<TobaccoProduct> = emptyList(),
     val filteredProducts: List<TobaccoProduct> = emptyList(),
     val searchQuery: String = "",
-    val selectedType: FilterType = FilterType.ALL,
+    val selectedType: TobaccoType? = null, // null = show all types
     val selectedRetailer: String? = null,
     val sortOption: SortOption = SortOption.PRICE_LOW_TO_HIGH,
     val isLoading: Boolean = true,
@@ -95,7 +89,7 @@ class TobaccoViewModel(
         applyFiltersAndSort()
     }
 
-    fun onTypeFilterChange(type: FilterType) {
+    fun onTypeFilterChange(type: TobaccoType?) {
         _uiState.update { it.copy(selectedType = type) }
         applyFiltersAndSort()
     }
@@ -124,10 +118,8 @@ class TobaccoViewModel(
         }
 
         // Apply type filter
-        filtered = when (state.selectedType) {
-            FilterType.CIGARETTES -> filtered.filter { it.type == TobaccoType.CIGARETTES }
-            FilterType.ROLLING_TOBACCO -> filtered.filter { it.type == TobaccoType.ROLLING_TOBACCO }
-            FilterType.ALL -> filtered
+        state.selectedType?.let { type ->
+            filtered = filtered.filter { it.type == type }
         }
 
         // Apply retailer filter
@@ -152,7 +144,7 @@ class TobaccoViewModel(
         _uiState.update {
             it.copy(
                 searchQuery = "",
-                selectedType = FilterType.ALL,
+                selectedType = null,
                 selectedRetailer = null,
                 sortOption = SortOption.PRICE_LOW_TO_HIGH
             )

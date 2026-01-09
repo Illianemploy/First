@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="64dp"
+    android:height="64dp"
+    android:viewportWidth="64"
+    android:viewportHeight="64">
+
+    <!-- Glossy white marble background -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M0,0 L64,0 L64,64 L0,64 Z"/>
+
+    <!-- Subtle marble gradient -->
+    <path
+        android:fillColor="#FAFAFA"
+        android:pathData="M0,0 L64,0 L64,64 L0,64 Z"
+        android:fillAlpha="0.5"/>
+
+    <!-- Tobacco leaves cluster (centered) -->
+    <!-- Leaf 1 (left) -->
+    <path
+        android:fillColor="#8B4513"
+        android:pathData="M20,28 Q18,22 22,18 Q26,22 24,28 Q22,26 20,28 Z"/>
+
+    <!-- Leaf 1 vein -->
+    <path
+        android:strokeColor="#654321"
+        android:strokeWidth="0.5"
+        android:pathData="M22,18 L22,28"/>
+
+    <!-- Leaf 2 (center) -->
+    <path
+        android:fillColor="#A0522D"
+        android:pathData="M28,30 Q26,22 32,16 Q38,22 36,30 Q32,26 28,30 Z"/>
+
+    <!-- Leaf 2 vein -->
+    <path
+        android:strokeColor="#654321"
+        android:strokeWidth="0.6"
+        android:pathData="M32,16 L32,30"/>
+
+    <!-- Leaf 3 (right) -->
+    <path
+        android:fillColor="#8B4513"
+        android:pathData="M38,28 Q36,22 40,18 Q44,22 42,28 Q40,26 38,28 Z"/>
+
+    <!-- Leaf 3 vein -->
+    <path
+        android:strokeColor="#654321"
+        android:strokeWidth="0.5"
+        android:pathData="M40,18 L40,28"/>
+
+    <!-- Tobacco pile/shreds below leaves -->
+    <path
+        android:fillColor="#8B4513"
+        android:fillAlpha="0.7"
+        android:pathData="M20,32 L22,38 L24,32 L26,38 L28,32 L30,38 L32,32 L34,38 L36,32 L38,38 L40,32 L42,38 L44,32 L44,42 L20,42 Z"/>
+
+    <!-- Tobacco texture lines -->
+    <path
+        android:strokeColor="#654321"
+        android:strokeWidth="0.4"
+        android:pathData="M22,34 L22,40 M26,34 L26,40 M30,34 L30,40 M34,34 L34,40 M38,34 L38,40 M42,34 L42,40"/>
+
+    <!-- Shadow beneath -->
+    <path
+        android:fillColor="#000000"
+        android:fillAlpha="0.1"
+        android:pathData="M22,42 L42,42 L42,44 L22,44 Z"/>
+
+    <!-- Glossy shine effect -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.15"
+        android:pathData="M0,0 Q32,0 32,32 Q32,0 0,0 Z"/>
+</vector>

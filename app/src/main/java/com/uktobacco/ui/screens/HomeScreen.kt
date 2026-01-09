@@ -21,11 +21,11 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.uktobacco.FilterType
 import com.uktobacco.SortOption
 import com.uktobacco.TobaccoViewModel
 import com.uktobacco.ui.components.EnhancedProductCard
 import com.uktobacco.ui.components.ProductCardShimmer
+import com.uktobacco.ui.components.ProductFilterBar
 import com.uktobacco.ui.theme.UberGreen
 import com.uktobacco.ui.theme.UberTextSecondary
 
@@ -58,46 +58,53 @@ fun HomeScreen(
                     )
                 )
         ) {
-            Column(
-                modifier = Modifier.padding(20.dp)
-            ) {
-                Spacer(modifier = Modifier.height(8.dp))
+            Column {
+                // Header text
+                Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                    Text(
+                        text = "UK Tobacco Prices",
+                        style = MaterialTheme.typography.headlineLarge,
+                        fontWeight = FontWeight.Bold
+                    )
 
-                Text(
-                    text = "UK Tobacco Prices",
-                    style = MaterialTheme.typography.headlineLarge,
-                    fontWeight = FontWeight.Bold
+                    Text(
+                        text = "Real-time pricing • ${uiState.filteredProducts.size} products",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = UberTextSecondary,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+
+                // Product filter bar (3 tiles)
+                ProductFilterBar(
+                    selectedFilter = uiState.selectedType,
+                    onFilterSelected = { type ->
+                        viewModel.onTypeFilterChange(type)
+                    }
                 )
-
-                Text(
-                    text = "Real-time pricing • ${uiState.products.size} products",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = UberTextSecondary,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
 
                 // Search bar
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = {
-                        searchQuery = it
-                        viewModel.onSearchQueryChange(it)
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("Search products, brands, retailers...") },
-                    leadingIcon = {
-                        Icon(Icons.Filled.Search, contentDescription = "Search")
-                    },
-                    trailingIcon = {
-                        Row {
-                            if (searchQuery.isNotEmpty()) {
-                                IconButton(onClick = {
-                                    searchQuery = ""
-                                    viewModel.onSearchQueryChange("")
-                                }) {
-                                    Icon(Icons.Filled.Clear, contentDescription = "Clear")
+                Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = {
+                            searchQuery = it
+                            viewModel.onSearchQueryChange(it)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("Search products, brands, retailers...") },
+                        leadingIcon = {
+                            Icon(Icons.Filled.Search, contentDescription = "Search")
+                        },
+                        trailingIcon = {
+                            Row {
+                                if (searchQuery.isNotEmpty()) {
+                                    IconButton(onClick = {
+                                        searchQuery = ""
+                                        viewModel.onSearchQueryChange("")
+                                    }) {
+                                        Icon(Icons.Filled.Clear, contentDescription = "Clear")
                                 }
                             }
                             IconButton(onClick = { showFilters = !showFilters }) {
@@ -117,7 +124,8 @@ fun HomeScreen(
                         focusedBorderColor = UberGreen,
                     )
                 )
-            }
+                } // Close search bar Column
+            } // Close main Column
         }
 
         // Filters section with animation

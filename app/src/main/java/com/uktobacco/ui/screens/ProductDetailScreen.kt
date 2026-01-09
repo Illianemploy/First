@@ -151,18 +151,21 @@ fun ProductDetailScreen(
                     verticalArrangement = Arrangement.spacedBy(20.dp)
                 ) {
                     // Type badge
+                    val (typeName, typeColor) = when (product.type) {
+                        TobaccoType.CIGARETTES -> "CIGARETTES" to CigaretteBlue
+                        TobaccoType.ROLLING_TOBACCO -> "ROLLING TOBACCO" to TobaccoOrange
+                        TobaccoType.TOBACCO_POUCHES -> "TOBACCO POUCHES" to Color(0xFF3B82F6)
+                    }
+
                     Surface(
-                        color = if (product.type == TobaccoType.CIGARETTES)
-                            CigaretteBlue.copy(alpha = 0.15f)
-                        else
-                            TobaccoOrange.copy(alpha = 0.15f),
+                        color = typeColor.copy(alpha = 0.15f),
                         shape = RoundedCornerShape(8.dp)
                     ) {
                         Text(
-                            text = if (product.type == TobaccoType.CIGARETTES) "CIGARETTES" else "ROLLING TOBACCO",
+                            text = typeName,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                             style = MaterialTheme.typography.labelMedium,
-                            color = if (product.type == TobaccoType.CIGARETTES) CigaretteBlue else TobaccoOrange,
+                            color = typeColor,
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -231,7 +234,11 @@ fun ProductDetailScreen(
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "per ${if (product.type == TobaccoType.CIGARETTES) "cigarette" else "gram"}",
+                                text = "per ${when (product.type) {
+                                    TobaccoType.CIGARETTES -> "cigarette"
+                                    TobaccoType.ROLLING_TOBACCO -> "gram"
+                                    TobaccoType.TOBACCO_POUCHES -> "pouch"
+                                }}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = UberTextSecondary
                             )
@@ -263,10 +270,11 @@ fun ProductDetailScreen(
                         InfoCard(
                             icon = Icons.Filled.Info,
                             title = "Package Type",
-                            description = if (product.type == TobaccoType.CIGARETTES)
-                                "Factory-made cigarettes in a sealed package"
-                            else
-                                "Hand-rolling tobacco in a resealable pouch"
+                            description = when (product.type) {
+                                TobaccoType.CIGARETTES -> "Factory-made cigarettes in a sealed package"
+                                TobaccoType.ROLLING_TOBACCO -> "Hand-rolling tobacco in a resealable pouch"
+                                TobaccoType.TOBACCO_POUCHES -> "Nicotine pouches in a convenient container"
+                            }
                         )
 
                         InfoCard(

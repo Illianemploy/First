@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="64dp"
+    android:height="64dp"
+    android:viewportWidth="64"
+    android:viewportHeight="64">
+
+    <!-- Glossy white marble background (matching app icon) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M0,0 L64,0 L64,64 L0,64 Z"/>
+
+    <!-- Subtle marble gradient -->
+    <path
+        android:fillColor="#FAFAFA"
+        android:pathData="M0,0 L64,0 L64,64 L0,64 Z"
+        android:fillAlpha="0.5"/>
+
+    <!-- Cigarette centered at slight angle -->
+    <group
+        android:translateX="32"
+        android:translateY="32"
+        android:rotation="15">
+
+        <!-- Cigarette body (white paper) -->
+        <path
+            android:fillColor="#F5F5F5"
+            android:pathData="M-18,-2.5 L12,-2.5 L12,2.5 L-18,2.5 Z"/>
+
+        <!-- Cigarette body shadow/depth -->
+        <path
+            android:fillColor="#E0E0E0"
+            android:pathData="M-18,2 L12,2 L12,2.5 L-18,2.5 Z"/>
+
+        <!-- Filter (cork/tan color) -->
+        <path
+            android:fillColor="#D4A574"
+            android:pathData="M12,-2.5 L18,-2.5 L18,2.5 L12,2.5 Z"/>
+
+        <!-- Filter band (gold accent) -->
+        <path
+            android:fillColor="#C9954D"
+            android:pathData="M11.5,-2.5 L12.5,-2.5 L12.5,2.5 L11.5,2.5 Z"/>
+
+        <!-- Subtle highlight on top -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:fillAlpha="0.4"
+            android:pathData="M-18,-2.5 L12,-2.5 L12,-1.5 L-18,-1.5 Z"/>
+
+        <!-- Drop shadow beneath -->
+        <path
+            android:fillColor="#000000"
+            android:fillAlpha="0.1"
+            android:pathData="M-16,2.8 L10,2.8 L10,3.5 L-16,3.5 Z"/>
+    </group>
+
+    <!-- Glossy shine effect (upper left) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.15"
+        android:pathData="M0,0 Q32,0 32,32 Q32,0 0,0 Z"/>
+</vector>

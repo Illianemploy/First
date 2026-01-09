@@ -56,6 +56,24 @@ class TobaccoRepository {
             Triple("Gauloises Blondes", "Gauloises", 30g to 17.80)
         )
 
+        // Popular UK tobacco pouches (nicotine pouches)
+        val tobaccoPouches = listOf(
+            Triple("Velo Ice Cool", "Velo", 20 to 5.50),
+            Triple("Velo Freeze", "Velo", 20 to 5.50),
+            Triple("Velo Polar Mint", "Velo", 20 to 5.50),
+            Triple("Nordic Spirit Mint", "Nordic Spirit", 20 to 6.00),
+            Triple("Nordic Spirit Elderflower", "Nordic Spirit", 20 to 6.00),
+            Triple("Nordic Spirit Bergamot Wildberry", "Nordic Spirit", 20 to 6.00),
+            Triple("Lyft Ice Cool Mint", "Lyft", 20 to 5.80),
+            Triple("Lyft Caribbean Breeze", "Lyft", 20 to 5.80),
+            Triple("Velo Ruby Berry", "Velo", 20 to 5.50),
+            Triple("Velo Citrus", "Velo", 20 to 5.50),
+            Triple("Nordic Spirit Spearmint", "Nordic Spirit", 20 to 6.00),
+            Triple("Lyft Arctic Freeze", "Lyft", 20 to 5.80),
+            Triple("Velo Tropic Breeze", "Velo", 20 to 5.50),
+            Triple("Nordic Spirit Mocha", "Nordic Spirit", 20 to 6.00)
+        )
+
         val retailers = listOf("Tesco", "Sainsbury's", "Co-op", "Morrisons", "ASDA", "Local Shop")
 
         // Add cigarettes
@@ -99,6 +117,29 @@ class TobaccoRepository {
                         retailer = retailer,
                         lastUpdated = LocalDateTime.now().minusMinutes(Random.nextLong(1, 120)),
                         pricePerUnit = String.format("%.2f", price / weight).toDouble()
+                    )
+                )
+            }
+        }
+
+        // Add tobacco pouches
+        tobaccoPouches.forEachIndexed { index, (name, brand, sizePrice) ->
+            val (pouchCount, basePrice) = sizePrice
+            retailers.take(3).forEach { retailer ->
+                val priceVariation = Random.nextDouble(-0.20, 0.40)
+                val price = (basePrice + priceVariation).coerceAtLeast(5.00)
+
+                products.add(
+                    TobaccoProduct(
+                        id = "pouch_${index}_${retailer.replace(" ", "_")}",
+                        name = name,
+                        brand = brand,
+                        type = TobaccoType.TOBACCO_POUCHES,
+                        price = String.format("%.2f", price).toDouble(),
+                        size = "${pouchCount} pouches",
+                        retailer = retailer,
+                        lastUpdated = LocalDateTime.now().minusMinutes(Random.nextLong(1, 120)),
+                        pricePerUnit = String.format("%.3f", price / pouchCount).toDouble()
                     )
                 )
             }

@@ -4,7 +4,8 @@ import java.time.LocalDateTime
 
 enum class TobaccoType {
     CIGARETTES,
-    ROLLING_TOBACCO
+    ROLLING_TOBACCO,
+    TOBACCO_POUCHES
 }
 
 data class TobaccoProduct(

@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="64dp"
+    android:height="64dp"
+    android:viewportWidth="64"
+    android:viewportHeight="64">
+
+    <!-- Glossy white marble background -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M0,0 L64,0 L64,64 L0,64 Z"/>
+
+    <!-- Subtle marble gradient -->
+    <path
+        android:fillColor="#FAFAFA"
+        android:pathData="M0,0 L64,0 L64,64 L0,64 Z"
+        android:fillAlpha="0.5"/>
+
+    <!-- Nicotine pouch container (centered, rounded rectangular can) -->
+    <!-- Shadow -->
+    <path
+        android:fillColor="#000000"
+        android:fillAlpha="0.1"
+        android:pathData="M20,42 Q32,44 44,42 L44,44 Q32,46 20,44 Z"/>
+
+    <!-- Can bottom (darker) -->
+    <path
+        android:fillColor="#2563EB"
+        android:fillAlpha="0.7"
+        android:pathData="M20,24 Q20,22 22,22 L42,22 Q44,22 44,24 L44,40 Q44,42 42,42 L22,42 Q20,42 20,40 Z"/>
+
+    <!-- Can front face -->
+    <path
+        android:fillColor="#3B82F6"
+        android:pathData="M20,24 Q20,22 22,22 L42,22 Q44,22 44,24 L44,38 Q44,40 42,40 L22,40 Q20,40 20,38 Z"/>
+
+    <!-- Can top lid -->
+    <path
+        android:fillColor="#60A5FA"
+        android:pathData="M20,22 Q32,18 44,22 L44,24 Q32,20 20,24 Z"/>
+
+    <!-- Label area (white) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.9"
+        android:pathData="M24,28 L40,28 L40,36 L24,36 Z"/>
+
+    <!-- Label accent lines -->
+    <path
+        android:strokeColor="#3B82F6"
+        android:strokeWidth="0.8"
+        android:pathData="M26,30 L38,30 M26,32 L38,32 M26,34 L38,34"/>
+
+    <!-- Can edge highlights -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="0.5"
+        android:strokeAlpha="0.5"
+        android:pathData="M22,22 Q22,24 22,38"/>
+
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="0.5"
+        android:strokeAlpha="0.3"
+        android:pathData="M42,22 Q42,24 42,38"/>
+
+    <!-- Lid detail -->
+    <path
+        android:strokeColor="#2563EB"
+        android:strokeWidth="0.6"
+        android:pathData="M24,22 Q32,20 40,22"/>
+
+    <!-- Glossy shine on can -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.25"
+        android:pathData="M24,24 L28,24 L28,36 L24,36 Z"/>
+
+    <!-- Overall glossy shine effect -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.15"
+        android:pathData="M0,0 Q32,0 32,32 Q32,0 0,0 Z"/>
+</vector>

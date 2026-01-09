@@ -369,25 +369,77 @@ object GlobalTobaccoPricing {
     )
 
     fun getCountriesByRegion(region: Region): List<CountryPricing> {
-        return allCountries.filter { it.region == region }.sortedBy { it.averagePackPrice }
+        return try {
+            val countries = allCountries.filter { it.region == region }.sortedBy { it.averagePackPrice }
+            if (countries.isEmpty()) {
+                println("Warning: No countries found for region ${region.displayName}")
+            }
+            countries
+        } catch (e: Exception) {
+            println("Error: Failed to get countries by region ${region.displayName}: ${e.message}")
+            emptyList()
+        }
     }
 
     fun getCountriesWithin4Hours(): List<CountryPricing> {
-        return allCountries.filter { it.flightTimeHours <= 4.0 && it.countryCode != "GB" }
-            .sortedBy { it.averagePackPrice }
+        return try {
+            val countries = allCountries.filter { it.flightTimeHours <= 4.0 && it.countryCode != "GB" }
+                .sortedBy { it.averagePackPrice }
+            if (countries.isEmpty()) {
+                println("Warning: No countries found within 4 hours flight time")
+            }
+            countries
+        } catch (e: Exception) {
+            println("Error: Failed to get countries within 4 hours: ${e.message}")
+            emptyList()
+        }
     }
 
     fun getCheapestCountries(limit: Int = 10): List<CountryPricing> {
-        return allCountries.filter { it.countryCode != "GB" }
-            .sortedBy { it.averagePackPrice }
-            .take(limit)
+        return try {
+            if (limit <= 0) {
+                println("Error: Limit must be positive. Using default value of 10.")
+                return getCheapestCountries(10)
+            }
+
+            val countries = allCountries.filter { it.countryCode != "GB" }
+                .sortedBy { it.averagePackPrice }
+                .take(limit)
+
+            if (countries.isEmpty()) {
+                println("Warning: No countries available for cheapest countries list")
+            }
+            countries
+        } catch (e: Exception) {
+            println("Error: Failed to get cheapest countries: ${e.message}")
+            emptyList()
+        }
     }
 
     fun getHighestTaxCountries(limit: Int = 10): List<CountryPricing> {
-        return allCountries.sortedByDescending { it.taxRate }.take(limit)
+        return try {
+            if (limit <= 0) {
+                println("Error: Limit must be positive. Using default value of 10.")
+                return getHighestTaxCountries(10)
+            }
+
+            val countries = allCountries.sortedByDescending { it.taxRate }.take(limit)
+            if (countries.isEmpty()) {
+                println("Warning: No countries available for highest tax countries list")
+            }
+            countries
+        } catch (e: Exception) {
+            println("Error: Failed to get highest tax countries: ${e.message}")
+            emptyList()
+        }
     }
 
     fun getAllRegions(): List<Region> {
-        return Region.entries.toList()
+        return try {
+            Region.entries.toList()
+        } catch (e: Exception) {
+            println("Error: Failed to get all regions: ${e.message}")
+            emptyList()
+        }
     }
 }

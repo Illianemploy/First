@@ -9,34 +9,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-enum class SortOption {
-    PRICE_LOW_TO_HIGH,
-    PRICE_HIGH_TO_LOW,
-    NAME_A_TO_Z,
-    BRAND,
-    RETAILER,
-    LAST_UPDATED
-}
-
-enum class FilterType {
-    ALL,
-    CIGARETTES,
-    ROLLING_TOBACCO
-}
-
-data class UiState(
-    val products: List<TobaccoProduct> = emptyList(),
-    val filteredProducts: List<TobaccoProduct> = emptyList(),
-    val searchQuery: String = "",
-    val selectedType: FilterType = FilterType.ALL,
-    val selectedRetailer: String? = null,
-    val sortOption: SortOption = SortOption.PRICE_LOW_TO_HIGH,
-    val isLoading: Boolean = true,
-    val availableRetailers: List<String> = emptyList(),
-    val favorites: Set<String> = emptySet(),
-    val smokingProfile: SmokingProfile? = null
-)
-
 class TobaccoViewModel : ViewModel() {
 
     private val repository = TobaccoRepository()
@@ -51,28 +23,53 @@ class TobaccoViewModel : ViewModel() {
 
     private fun loadProducts() {
         viewModelScope.launch {
-            val products = repository.getAllProducts()
-            val retailers = products.map { it.retailer }.distinct().sorted()
+            try {
+                val products = repository.getAllProducts()
 
-            _uiState.update { state ->
-                state.copy(
-                    products = products,
-                    filteredProducts = products,
-                    availableRetailers = retailers,
-                    isLoading = false
-                )
+                if (products.isEmpty()) {
+                    println("Warning: No products loaded from repository")
+                }
+
+                val retailers = products.map { it.retailer }.distinct().sorted()
+
+                _uiState.update { state ->
+                    state.copy(
+                        products = products,
+                        filteredProducts = products,
+                        availableRetailers = retailers,
+                        isLoading = false
+                    )
+                }
+                applyFiltersAndSort()
+            } catch (e: Exception) {
+                println("Error: Failed to load products: ${e.message}")
+                _uiState.update { state ->
+                    state.copy(
+                        isLoading = false,
+                        products = emptyList(),
+                        filteredProducts = emptyList()
+                    )
+                }
             }
-            applyFiltersAndSort()
         }
     }
 
     private fun observeRealtimeUpdates() {
         viewModelScope.launch {
-            repository.observeProducts().collect { products ->
-                _uiState.update { state ->
-                    state.copy(products = products)
+            try {
+                repository.observeProducts().collect { products ->
+                    try {
+                        _uiState.update { state ->
+                            state.copy(products = products)
+                        }
+                        applyFiltersAndSort()
+                    } catch (e: Exception) {
+                        println("Error: Failed to update products in UI state: ${e.message}")
+                    }
                 }
-                applyFiltersAndSort()
+            } catch (e: Exception) {
+                println("Error: Real-time product updates failed: ${e.message}")
+                // Don't crash the app, just log the error
             }
         }
     }
@@ -98,41 +95,46 @@ class TobaccoViewModel : ViewModel() {
     }
 
     private fun applyFiltersAndSort() {
-        val state = _uiState.value
-        var filtered = state.products
+        try {
+            val state = _uiState.value
+            var filtered = state.products
 
-        // Apply search filter
-        if (state.searchQuery.isNotBlank()) {
-            filtered = filtered.filter {
-                it.name.contains(state.searchQuery, ignoreCase = true) ||
-                it.brand.contains(state.searchQuery, ignoreCase = true) ||
-                it.retailer.contains(state.searchQuery, ignoreCase = true)
+            // Apply search filter
+            if (state.searchQuery.isNotBlank()) {
+                filtered = filtered.filter {
+                    it.name.contains(state.searchQuery, ignoreCase = true) ||
+                    it.brand.contains(state.searchQuery, ignoreCase = true) ||
+                    it.retailer.contains(state.searchQuery, ignoreCase = true)
+                }
             }
-        }
 
-        // Apply type filter
-        filtered = when (state.selectedType) {
-            FilterType.CIGARETTES -> filtered.filter { it.type == TobaccoType.CIGARETTES }
-            FilterType.ROLLING_TOBACCO -> filtered.filter { it.type == TobaccoType.ROLLING_TOBACCO }
-            FilterType.ALL -> filtered
-        }
+            // Apply type filter
+            filtered = when (state.selectedType) {
+                FilterType.CIGARETTES -> filtered.filter { it.type == TobaccoType.CIGARETTES }
+                FilterType.ROLLING_TOBACCO -> filtered.filter { it.type == TobaccoType.ROLLING_TOBACCO }
+                FilterType.ALL -> filtered
+            }
 
-        // Apply retailer filter
-        state.selectedRetailer?.let { retailer ->
-            filtered = filtered.filter { it.retailer == retailer }
-        }
+            // Apply retailer filter
+            state.selectedRetailer?.let { retailer ->
+                filtered = filtered.filter { it.retailer == retailer }
+            }
 
-        // Apply sorting
-        filtered = when (state.sortOption) {
-            SortOption.PRICE_LOW_TO_HIGH -> filtered.sortedBy { it.price }
-            SortOption.PRICE_HIGH_TO_LOW -> filtered.sortedByDescending { it.price }
-            SortOption.NAME_A_TO_Z -> filtered.sortedBy { it.name }
-            SortOption.BRAND -> filtered.sortedBy { it.brand }
-            SortOption.RETAILER -> filtered.sortedBy { it.retailer }
-            SortOption.LAST_UPDATED -> filtered.sortedByDescending { it.lastUpdated }
-        }
+            // Apply sorting
+            filtered = when (state.sortOption) {
+                SortOption.PRICE_LOW_TO_HIGH -> filtered.sortedBy { it.price }
+                SortOption.PRICE_HIGH_TO_LOW -> filtered.sortedByDescending { it.price }
+                SortOption.NAME_A_TO_Z -> filtered.sortedBy { it.name }
+                SortOption.BRAND -> filtered.sortedBy { it.brand }
+                SortOption.RETAILER -> filtered.sortedBy { it.retailer }
+                SortOption.LAST_UPDATED -> filtered.sortedByDescending { it.lastUpdated }
+            }
 
-        _uiState.update { it.copy(filteredProducts = filtered) }
+            _uiState.update { it.copy(filteredProducts = filtered) }
+        } catch (e: Exception) {
+            println("Error: Failed to apply filters and sorting: ${e.message}")
+            // Keep the current filtered products if filtering fails
+        }
     }
 
     fun clearFilters() {
@@ -167,7 +169,20 @@ class TobaccoViewModel : ViewModel() {
     }
 
     fun getProductById(productId: String): TobaccoProduct? {
-        return _uiState.value.products.find { it.id == productId }
+        return try {
+            if (productId.isBlank()) {
+                println("Error: Product ID cannot be blank")
+                return null
+            }
+            val product = _uiState.value.products.find { it.id == productId }
+            if (product == null) {
+                println("Warning: Product with ID '$productId' not found")
+            }
+            product
+        } catch (e: Exception) {
+            println("Error: Failed to get product by ID '$productId': ${e.message}")
+            null
+        }
     }
 
     fun updateSmokingProfile(profile: SmokingProfile) {

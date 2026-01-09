@@ -3,11 +3,16 @@ package com.uktobacco.navigation
 import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
+import com.uktobacco.TobaccoViewModel
+import com.uktobacco.TobaccoViewModelFactory
+import com.uktobacco.data.UserPreferencesRepository
 import com.uktobacco.ui.screens.*
 
 sealed class Screen(val route: String) {
@@ -29,6 +34,11 @@ sealed class Screen(val route: String) {
 @OptIn(ExperimentalAnimationApi::class)
 @Composable
 fun AppNavigation(navController: NavHostController) {
+    val context = LocalContext.current
+    val preferencesRepository = UserPreferencesRepository(context)
+    val viewModelFactory = TobaccoViewModelFactory(preferencesRepository)
+    val sharedViewModel: TobaccoViewModel = viewModel(factory = viewModelFactory)
+
     NavHost(
         navController = navController,
         startDestination = Screen.Home.route,
@@ -64,7 +74,8 @@ fun AppNavigation(navController: NavHostController) {
                 },
                 onBrandClick = { brandName ->
                     navController.navigate(Screen.CompanyHistory.createRoute(brandName))
-                }
+                },
+                viewModel = sharedViewModel
             )
         }
 
@@ -80,7 +91,8 @@ fun AppNavigation(navController: NavHostController) {
             FavoritesScreen(
                 onProductClick = { productId ->
                     navController.navigate(Screen.ProductDetail.createRoute(productId))
-                }
+                },
+                viewModel = sharedViewModel
             )
         }
 
@@ -100,8 +112,10 @@ fun AppNavigation(navController: NavHostController) {
 
         composable(Screen.SmokingProfile.route) {
             SmokingProfileScreen(
-                currentProfile = null,
-                onProfileSaved = { /* TODO: Save to ViewModel */ }
+                currentProfile = sharedViewModel.getSmokingProfile(),
+                onProfileSaved = { profile ->
+                    sharedViewModel.updateSmokingProfile(profile)
+                }
             )
         }
 
@@ -123,7 +137,8 @@ fun AppNavigation(navController: NavHostController) {
                 onBackClick = { navController.popBackStack() },
                 onBrandClick = { brandName ->
                     navController.navigate(Screen.CompanyHistory.createRoute(brandName))
-                }
+                },
+                viewModel = sharedViewModel
             )
         }
 

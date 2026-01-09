@@ -3,6 +3,7 @@ package com.uktobacco
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.uktobacco.data.SmokingProfile
+import com.uktobacco.data.UserPreferencesRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -37,7 +38,9 @@ data class UiState(
     val smokingProfile: SmokingProfile? = null
 )
 
-class TobaccoViewModel : ViewModel() {
+class TobaccoViewModel(
+    private val preferencesRepository: UserPreferencesRepository? = null
+) : ViewModel() {
 
     private val repository = TobaccoRepository()
 
@@ -47,6 +50,17 @@ class TobaccoViewModel : ViewModel() {
     init {
         loadProducts()
         observeRealtimeUpdates()
+        loadSmokingProfile()
+    }
+
+    private fun loadSmokingProfile() {
+        preferencesRepository?.let { repo ->
+            viewModelScope.launch {
+                repo.smokingProfileFlow.collect { profile ->
+                    _uiState.update { it.copy(smokingProfile = profile) }
+                }
+            }
+        }
     }
 
     private fun loadProducts() {
@@ -172,9 +186,19 @@ class TobaccoViewModel : ViewModel() {
 
     fun updateSmokingProfile(profile: SmokingProfile) {
         _uiState.update { it.copy(smokingProfile = profile) }
+        viewModelScope.launch {
+            preferencesRepository?.saveSmokingProfile(profile)
+        }
     }
 
     fun getSmokingProfile(): SmokingProfile? {
         return _uiState.value.smokingProfile
+    }
+
+    fun clearSmokingProfile() {
+        _uiState.update { it.copy(smokingProfile = null) }
+        viewModelScope.launch {
+            preferencesRepository?.clearSmokingProfile()
+        }
     }
 }

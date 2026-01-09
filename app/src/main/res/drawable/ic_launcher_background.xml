@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Pure white base -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#FFFFFF"/>
+        </shape>
+    </item>
+
+    <!-- Subtle marble texture - light grey veining -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="45"
+                android:startColor="#FAFAFA"
+                android:centerColor="#FFFFFF"
+                android:endColor="#F5F5F5"
+                android:type="linear"/>
+        </shape>
+    </item>
+
+    <!-- Glossy effect - radial gradient overlay for depth -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:gradientRadius="800dp"
+                android:centerX="0.5"
+                android:centerY="0.3"
+                android:startColor="#33FFFFFF"
+                android:endColor="#00FFFFFF"
+                android:type="radial"/>
+        </shape>
+    </item>
+
+    <!-- Subtle vignette effect at edges -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:gradientRadius="600dp"
+                android:centerX="0.5"
+                android:centerY="0.5"
+                android:startColor="#00000000"
+                android:endColor="#0A000000"
+                android:type="radial"/>
+        </shape>
+    </item>
+</layer-list>

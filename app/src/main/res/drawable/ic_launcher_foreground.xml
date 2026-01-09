@@ -1,20 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <group android:scaleX="0.5"
-        android:scaleY="0.5"
-        android:translateX="27"
-        android:translateY="27">
+
+    <!-- Center and rotate the cigarette at 45 degrees -->
+    <group
+        android:translateX="54"
+        android:translateY="54"
+        android:rotation="45">
+
+        <!-- Cigarette body (white paper) -->
         <path
-            android:fillColor="#4CAF50"
-            android:pathData="M54,27C40.2,27 29,38.2 29,52s11.2,25 25,25 25,-11.2 25,-25 -11.2,-25 -25,-25zM54,68c-8.8,0 -16,-7.2 -16,-16s7.2,-16 16,-16 16,7.2 16,16 -7.2,16 -16,16z"/>
+            android:fillColor="#F5F5F5"
+            android:pathData="M-20,-3 L15,-3 L15,3 L-20,3 Z"/>
+
+        <!-- Cigarette body shadow/depth -->
         <path
-            android:fillColor="#8BC34A"
-            android:pathData="M44,45h20v4h-20z"/>
+            android:fillColor="#E0E0E0"
+            android:pathData="M-20,2.5 L15,2.5 L15,3 L-20,3 Z"/>
+
+        <!-- Filter (cork/tan color) -->
         <path
-            android:fillColor="#8BC34A"
-            android:pathData="M52,37h4v20h-4z"/>
+            android:fillColor="#D4A574"
+            android:pathData="M15,-3 L22,-3 L22,3 L15,3 Z"/>
+
+        <!-- Filter band (gold accent) -->
+        <path
+            android:fillColor="#C9954D"
+            android:pathData="M14.5,-3 L15.5,-3 L15.5,3 L14.5,3 Z"/>
+
+        <!-- Filter texture lines (subtle detail) -->
+        <path
+            android:strokeColor="#C19A6B"
+            android:strokeWidth="0.3"
+            android:pathData="M16,-3 L16,3 M17.5,-3 L17.5,3 M19,-3 L19,3 M20.5,-3 L20.5,3"/>
+
+        <!-- Cigarette end (lit/ash effect - subtle grey) -->
+        <path
+            android:fillColor="#9E9E9E"
+            android:pathData="M-20,-2.5 L-20.5,-2 L-21,-1 L-21,1 L-20.5,2 L-20,2.5 Z"/>
+
+        <!-- Subtle highlight on top of cigarette (glossy effect) -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:fillAlpha="0.4"
+            android:pathData="M-20,-3 L15,-3 L15,-2 L-20,-2 Z"/>
+
+        <!-- Drop shadow beneath (for depth) -->
+        <path
+            android:fillColor="#000000"
+            android:fillAlpha="0.08"
+            android:pathData="M-18,3.5 L13,3.5 L13,4.5 L-18,4.5 Z"/>
     </group>
 </vector>

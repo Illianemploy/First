@@ -84,49 +84,80 @@ class TobaccoRepository {
         tobaccoBrands.forEachIndexed { index, (name, brand, sizePrice) ->
             val (size, basePrice) = sizePrice
             retailers.take(3).forEach { retailer ->
-                val priceVariation = Random.nextDouble(-0.50, 1.00)
-                val price = (basePrice + priceVariation).coerceAtLeast(15.00)
-                val weight = size.removeSuffix("g").toInt()
+                try {
+                    val priceVariation = Random.nextDouble(-0.50, 1.00)
+                    val price = (basePrice + priceVariation).coerceAtLeast(15.00)
 
-                products.add(
-                    TobaccoProduct(
-                        id = "tob_${index}_${weight}_${retailer.replace(" ", "_")}",
-                        name = "$name $size",
-                        brand = brand,
-                        type = TobaccoType.ROLLING_TOBACCO,
-                        price = String.format("%.2f", price).toDouble(),
-                        size = "${weight}g pouch",
-                        retailer = retailer,
-                        lastUpdated = LocalDateTime.now().minusMinutes(Random.nextLong(1, 120)),
-                        pricePerUnit = String.format("%.2f", price / weight).toDouble()
+                    // Safely parse weight from size string
+                    val weightStr = size.removeSuffix("g")
+                    val weight = weightStr.toIntOrNull() ?: run {
+                        println("Error: Invalid weight format '$size' for product $name. Skipping.")
+                        return@forEach
+                    }
+
+                    if (weight <= 0) {
+                        println("Error: Invalid weight value $weight for product $name. Skipping.")
+                        return@forEach
+                    }
+
+                    products.add(
+                        TobaccoProduct(
+                            id = "tob_${index}_${weight}_${retailer.replace(" ", "_")}",
+                            name = "$name $size",
+                            brand = brand,
+                            type = TobaccoType.ROLLING_TOBACCO,
+                            price = String.format("%.2f", price).toDouble(),
+                            size = "${weight}g pouch",
+                            retailer = retailer,
+                            lastUpdated = LocalDateTime.now().minusMinutes(Random.nextLong(1, 120)),
+                            pricePerUnit = String.format("%.2f", price / weight).toDouble()
+                        )
                     )
-                )
+                } catch (e: Exception) {
+                    println("Error: Failed to create tobacco product $name: ${e.message}")
+                }
             }
         }
     }
 
     // Simulate real-time updates
     fun observeProducts(): Flow<List<TobaccoProduct>> = flow {
-        while (true) {
-            // Emit current products
-            emit(products.toList())
+        try {
+            while (true) {
+                // Emit current products
+                emit(products.toList())
 
-            // Simulate price updates every 30 seconds
-            delay(30000)
+                // Simulate price updates every 30 seconds
+                delay(30000)
 
-            // Randomly update some prices (simulate real-time data)
-            val productsToUpdate = products.shuffled().take(Random.nextInt(3, 8))
-            productsToUpdate.forEach { product ->
-                val priceChange = Random.nextDouble(-0.20, 0.20)
-                val updatedProduct = product.copy(
-                    price = String.format("%.2f", (product.price + priceChange).coerceAtLeast(10.00)).toDouble(),
-                    lastUpdated = LocalDateTime.now()
-                )
-                val index = products.indexOfFirst { it.id == product.id }
-                if (index != -1) {
-                    products[index] = updatedProduct
+                // Randomly update some prices (simulate real-time data)
+                if (products.isEmpty()) {
+                    println("Warning: No products available for price updates")
+                    continue
+                }
+
+                val numToUpdate = Random.nextInt(3, 8).coerceAtMost(products.size)
+                val productsToUpdate = products.shuffled().take(numToUpdate)
+
+                productsToUpdate.forEach { product ->
+                    try {
+                        val priceChange = Random.nextDouble(-0.20, 0.20)
+                        val updatedProduct = product.copy(
+                            price = String.format("%.2f", (product.price + priceChange).coerceAtLeast(10.00)).toDouble(),
+                            lastUpdated = LocalDateTime.now()
+                        )
+                        val index = products.indexOfFirst { it.id == product.id }
+                        if (index != -1) {
+                            products[index] = updatedProduct
+                        }
+                    } catch (e: Exception) {
+                        println("Error: Failed to update price for product ${product.id}: ${e.message}")
+                    }
                 }
             }
+        } catch (e: Exception) {
+            println("Error: Product observation flow interrupted: ${e.message}")
+            throw e
         }
     }
 
@@ -157,7 +188,21 @@ class TobaccoRepository {
     }
 
     fun getCheapestByBrand(): Map<String, TobaccoProduct> {
-        return products.groupBy { it.brand }
-            .mapValues { (_, products) -> products.minByOrNull { it.price }!! }
+        return try {
+            products.groupBy { it.brand }
+                .mapNotNull { (brand, brandProducts) ->
+                    val cheapest = brandProducts.minByOrNull { it.price }
+                    if (cheapest != null) {
+                        brand to cheapest
+                    } else {
+                        println("Warning: No products found for brand $brand")
+                        null
+                    }
+                }
+                .toMap()
+        } catch (e: Exception) {
+            println("Error: Failed to get cheapest products by brand: ${e.message}")
+            emptyMap()
+        }
     }
 }

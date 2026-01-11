@@ -94,6 +94,9 @@ fun AppNavigation(navController: NavHostController) {
                 },
                 onNavigateToAwareness = {
                     navController.navigate(Screen.Awareness.route)
+                },
+                onNavigateToFavorites = {
+                    navController.navigate(Screen.Favorites.route)
                 }
             )
         }

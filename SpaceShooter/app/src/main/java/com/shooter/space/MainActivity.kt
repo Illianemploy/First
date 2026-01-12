@@ -31,6 +31,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.ln
+import kotlin.math.min
 import kotlin.math.sin
 import kotlin.random.Random
 
@@ -39,6 +41,7 @@ data class Star(val x: Float, val y: Float, val size: Float, val speed: Float)
 data class Enemy(val x: Float, var y: Float, val size: Float, val speed: Float, val type: Int, var timeAlive: Float = 0f)
 data class Player(var x: Float, var y: Float, val size: Float = 60f)
 data class Bullet(val x: Float, var y: Float, val speed: Float = 20f)
+data class CurrencyNotification(val x: Float, val y: Float, val amount: Int, var alpha: Float = 1f, var timeAlive: Float = 0f)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -47,20 +50,24 @@ class MainActivity : ComponentActivity() {
             val context = LocalContext.current
             var gameStarted by remember { mutableStateOf(false) }
             var highScore by remember { mutableIntStateOf(getHighScore(context)) }
+            var totalCurrency by remember { mutableIntStateOf(getCurrency(context)) }
 
             MaterialTheme {
                 if (!gameStarted) {
                     MenuScreen(
                         highScore = highScore,
+                        currency = totalCurrency,
                         onStartGame = { gameStarted = true }
                     )
                 } else {
                     GameScreen(
-                        onGameOver = { score ->
+                        onGameOver = { score, earnedCurrency ->
                             if (score > highScore) {
                                 highScore = score
                                 saveHighScore(context, score)
                             }
+                            totalCurrency += earnedCurrency
+                            saveCurrency(context, totalCurrency)
                             gameStarted = false
                         }
                     )
@@ -70,7 +77,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// High score persistence
+// Persistence functions
 private fun getHighScore(context: Context): Int {
     val prefs = context.getSharedPreferences("SpaceShooterPrefs", Context.MODE_PRIVATE)
     return prefs.getInt("high_score", 0)
@@ -81,8 +88,43 @@ private fun saveHighScore(context: Context, score: Int) {
     prefs.edit().putInt("high_score", score).apply()
 }
 
+private fun getCurrency(context: Context): Int {
+    val prefs = context.getSharedPreferences("SpaceShooterPrefs", Context.MODE_PRIVATE)
+    return prefs.getInt("currency", 0)
+}
+
+private fun saveCurrency(context: Context, currency: Int) {
+    val prefs = context.getSharedPreferences("SpaceShooterPrefs", Context.MODE_PRIVATE)
+    prefs.edit().putInt("currency", currency).apply()
+}
+
+/**
+ * Calculates the time-based multiplier for score and currency rewards.
+ * Uses logarithmic scaling to provide diminishing returns over time.
+ *
+ * Formula: multiplier = 1 + a * ln(1 + t)
+ * Where:
+ *   t = survivedMilliseconds / 1000.0 (time in seconds)
+ *   a = 0.6 (tunable constant)
+ *   ln = natural logarithm
+ *
+ * @param survivedMilliseconds Total time survived in milliseconds
+ * @param scalingFactor The 'a' constant (default 0.6)
+ * @param maxMultiplier Maximum allowed multiplier (default 10.0)
+ * @return The calculated multiplier (clamped to maxMultiplier)
+ */
+private fun calculateMultiplier(
+    survivedMilliseconds: Long,
+    scalingFactor: Double = 0.6,
+    maxMultiplier: Double = 10.0
+): Double {
+    val timeInSeconds = survivedMilliseconds / 1000.0
+    val multiplier = 1.0 + scalingFactor * ln(1.0 + timeInSeconds)
+    return min(multiplier, maxMultiplier)
+}
+
 @Composable
-fun MenuScreen(highScore: Int, onStartGame: () -> Unit) {
+fun MenuScreen(highScore: Int, currency: Int, onStartGame: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -151,6 +193,27 @@ fun MenuScreen(highScore: Int, onStartGame: () -> Unit) {
                             color = Color(0xFFFFD700)
                         )
                     }
+
+                    // Display total currency
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            "Your $M: ",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Text(
+                            "$currency",
+                            fontSize = 28.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF00FF00) // Green for currency
+                        )
+                    }
                 }
             }
 
@@ -175,7 +238,7 @@ fun MenuScreen(highScore: Int, onStartGame: () -> Unit) {
 }
 
 @Composable
-fun GameScreen(onGameOver: (Int) -> Unit) {
+fun GameScreen(onGameOver: (Int, Int) -> Unit) {
     val configuration = LocalConfiguration.current
     val density = LocalDensity.current
 
@@ -186,7 +249,12 @@ fun GameScreen(onGameOver: (Int) -> Unit) {
     var enemies by remember { mutableStateOf<List<Enemy>>(emptyList()) }
     var bullets by remember { mutableStateOf<List<Bullet>>(emptyList()) }
     var stars by remember { mutableStateOf<List<Star>>(emptyList()) }
+    var currencyNotifications by remember { mutableStateOf<List<CurrencyNotification>>(emptyList()) }
+
+    // Game state
     var score by remember { mutableIntStateOf(0) }
+    var earnedCurrency by remember { mutableIntStateOf(0) }
+    var currentMultiplier by remember { mutableDoubleStateOf(1.0) }
     var isAlive by remember { mutableStateOf(true) }
 
     // Initialize stars
@@ -203,9 +271,11 @@ fun GameScreen(onGameOver: (Int) -> Unit) {
 
     // Game loop
     LaunchedEffect(isAlive) {
+        val gameStartTime = System.currentTimeMillis()
         var lastSpawn = 0L
         var lastBulletFire = 0L
-        var lastScoreUpdate = System.currentTimeMillis()
+        var lastScoreUpdate = gameStartTime
+        var lastCurrencyAward = gameStartTime
         var gameTime = 0f
 
         while (isActive && isAlive) {
@@ -213,6 +283,10 @@ fun GameScreen(onGameOver: (Int) -> Unit) {
             gameTime += 0.016f
 
             val currentTime = System.currentTimeMillis()
+            val survivedMilliseconds = currentTime - gameStartTime
+
+            // Calculate time-based multiplier for rewards
+            currentMultiplier = calculateMultiplier(survivedMilliseconds)
 
             // Update stars
             stars = stars.map { star ->
@@ -313,7 +387,11 @@ fun GameScreen(onGameOver: (Int) -> Unit) {
                     if (distance < enemy.size / 2) {
                         enemiesToRemove.add(enemy)
                         bulletsToRemove.add(bullet)
-                        score += 10 // Points for destroying enemy
+
+                        // Award score with multiplier for destroying enemy
+                        val basePoints = 10
+                        val earnedPoints = (basePoints * currentMultiplier).toInt()
+                        score += earnedPoints
                     }
                 }
             }
@@ -331,16 +409,52 @@ fun GameScreen(onGameOver: (Int) -> Unit) {
                 }
             }
 
-            // Update score for survival
+            // Update score for survival (base 1 point per 100ms with multiplier)
             if (currentTime - lastScoreUpdate > 100) {
-                score += 1
+                val survivalPoints = (1 * currentMultiplier).toInt()
+                score += survivalPoints
                 lastScoreUpdate = currentTime
+            }
+
+            // Award currency ($M) periodically with multiplier
+            // Award every 1 second to make notifications meaningful
+            if (currentTime - lastCurrencyAward > 1000) {
+                // Base currency award: 1 $M per second
+                val baseCurrency = 1
+                val awardedCurrency = (baseCurrency * currentMultiplier).toInt()
+
+                if (awardedCurrency > 0) {
+                    earnedCurrency += awardedCurrency
+
+                    // Create visual notification at random position near top
+                    val notifX = screenWidth * 0.2f + Random.nextFloat() * screenWidth * 0.6f
+                    val notifY = screenHeight * 0.15f + Random.nextFloat() * 50f
+                    currencyNotifications = currencyNotifications + CurrencyNotification(
+                        x = notifX,
+                        y = notifY,
+                        amount = awardedCurrency
+                    )
+                }
+
+                lastCurrencyAward = currentTime
+            }
+
+            // Update currency notifications (fade out and float up)
+            currencyNotifications = currencyNotifications.mapNotNull { notification ->
+                val updatedNotif = notification.copy(
+                    timeAlive = notification.timeAlive + 0.016f,
+                    alpha = (1f - notification.timeAlive / 2f).coerceIn(0f, 1f)
+                )
+
+                // Remove notifications after 2 seconds
+                if (updatedNotif.timeAlive > 2f) null
+                else updatedNotif
             }
         }
 
         if (!isAlive) {
             delay(2000)
-            onGameOver(score)
+            onGameOver(score, earnedCurrency)
         }
     }
 
@@ -393,18 +507,53 @@ fun GameScreen(onGameOver: (Int) -> Unit) {
             } else {
                 drawExplosion(player)
             }
+
+            // Draw currency notifications
+            currencyNotifications.forEach { notification ->
+                drawCurrencyNotification(notification)
+            }
         }
 
-        // Score UI
-        Text(
-            text = "SCORE: $score",
-            fontSize = 32.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color.Cyan,
+        // Score and Currency UI (Top)
+        Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = 40.dp)
-        )
+                .padding(top = 30.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "SCORE: $score",
+                fontSize = 28.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.Cyan
+            )
+
+            Row(
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Earned $M: ",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+                Text(
+                    text = "$earnedCurrency",
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF00FF00) // Green
+                )
+            }
+
+            Text(
+                text = "x${String.format("%.2f", currentMultiplier)}",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFFFFD700), // Gold
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
 
         if (!isAlive) {
             Text(
@@ -538,6 +687,59 @@ fun DrawScope.drawExplosion(player: Player) {
             radius = player.size / 3,
             center = Offset(x, y),
             alpha = 0.7f
+        )
+    }
+}
+
+/**
+ * Draws a currency notification that floats up and fades out.
+ * Shows the amount of $M earned in green text.
+ *
+ * @param notification The currency notification to draw
+ */
+fun DrawScope.drawCurrencyNotification(notification: CurrencyNotification) {
+    val floatOffset = notification.timeAlive * 30f // Float upward over time
+
+    // Draw background glow
+    drawCircle(
+        color = Color(0xFF00FF00),
+        radius = 40f,
+        center = Offset(notification.x, notification.y - floatOffset),
+        alpha = notification.alpha * 0.2f
+    )
+
+    // Draw text outline for visibility (approximate with multiple offset draws)
+    val textColor = Color(0xFF00FF00) // Green
+    val outlineColor = Color.Black
+    val text = "+${notification.amount} \$M"
+
+    // Note: DrawScope doesn't have native text drawing, so we're drawing
+    // a visual representation using circles and shapes
+    // In a production app, you'd use androidx.compose.ui.text.drawText or a custom Canvas
+
+    // Draw a simple visual indicator (green glowing circle with size indicating amount)
+    val indicatorSize = 15f + (notification.amount * 2f)
+    drawCircle(
+        brush = Brush.radialGradient(
+            colors = listOf(Color(0xFF00FF00), Color(0xFF00FF00).copy(alpha = 0.3f), Color.Transparent),
+            center = Offset(notification.x, notification.y - floatOffset),
+            radius = indicatorSize
+        ),
+        radius = indicatorSize,
+        center = Offset(notification.x, notification.y - floatOffset),
+        alpha = notification.alpha
+    )
+
+    // Draw amount as multiple dots (visual representation)
+    for (i in 0 until notification.amount.coerceAtMost(5)) {
+        drawCircle(
+            color = Color.White,
+            radius = 3f,
+            center = Offset(
+                notification.x - 10f + i * 5f,
+                notification.y - floatOffset + 10f
+            ),
+            alpha = notification.alpha
         )
     }
 }

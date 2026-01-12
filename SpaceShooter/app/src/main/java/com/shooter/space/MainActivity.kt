@@ -33,6 +33,7 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.ln
 import kotlin.math.min
+import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.random.Random
 
@@ -42,6 +43,41 @@ data class Enemy(val x: Float, var y: Float, val size: Float, val speed: Float, 
 data class Player(var x: Float, var y: Float, val size: Float = 60f)
 data class Bullet(val x: Float, var y: Float, val speed: Float = 20f)
 data class CurrencyNotification(val x: Float, val y: Float, val amount: Int, var alpha: Float = 1f, var timeAlive: Float = 0f)
+
+// Shop system
+enum class ShopItemType {
+    FIRE_RATE, BULLET_SPEED, SCORE_BOOST, CURRENCY_BOOST,
+    GLASS_CANNON, DEBT_ADVANCE, SURVIVAL_CHALLENGE, EXTREME_MULTIPLIER
+}
+
+data class ShopItem(
+    val id: String,
+    val name: String,
+    val description: String,
+    val type: ShopItemType,
+    val baseCost: Int,
+    val isHighRisk: Boolean = false,
+    val tier: Int = 1
+)
+
+data class PlayerUpgrades(
+    var fireRateLevel: Int = 0,
+    var bulletSpeedLevel: Int = 0,
+    var scoreBoostPercent: Double = 0.0,
+    var currencyBoostPercent: Double = 0.0,
+    var glassCannonActive: Boolean = false,
+    var debtPenaltyShopsRemaining: Int = 0,
+    var extremeMultiplierActive: Boolean = false
+)
+
+data class RiskState(
+    val type: ShopItemType,
+    val description: String,
+    var timeRemaining: Long, // milliseconds
+    var isActive: Boolean = true,
+    val onSuccess: () -> Unit,
+    val onFailure: () -> Unit
+)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -121,6 +157,118 @@ private fun calculateMultiplier(
     val timeInSeconds = survivedMilliseconds / 1000.0
     val multiplier = 1.0 + scalingFactor * ln(1.0 + timeInSeconds)
     return min(multiplier, maxMultiplier)
+}
+
+/**
+ * Calculates the scaled cost for a shop item based on shop visit index.
+ * Uses power scaling to provide smooth price increases.
+ *
+ * Formula: cost = baseCost * (1 + shopIndex ^ 0.6)
+ *
+ * @param baseCost Base price of the item
+ * @param shopIndex Current shop window index (0-based)
+ * @param debtPenalty Additional cost multiplier from debt effects
+ * @return Scaled cost
+ */
+private fun calculateItemCost(baseCost: Int, shopIndex: Int, debtPenalty: Double = 1.0): Int {
+    val scaledCost = baseCost * (1.0 + kotlin.math.pow(shopIndex.toDouble(), 0.6))
+    return (scaledCost * debtPenalty).toInt()
+}
+
+/**
+ * Generates a list of shop items for the current shop window.
+ * Items scale based on shopIndex and player progress.
+ * High-risk items are excluded from early shops (before 60s).
+ *
+ * @param shopIndex Current shop window index
+ * @param survivedSeconds Total survival time in seconds
+ * @return List of available shop items
+ */
+private fun generateShopItems(shopIndex: Int, survivedSeconds: Long): List<ShopItem> {
+    val items = mutableListOf<ShopItem>()
+    val allowHighRisk = survivedSeconds >= 60
+
+    // Standard upgrades (always available)
+    items.add(ShopItem(
+        id = "fire_rate",
+        name = "Rapid Fire",
+        description = "Decrease time between shots by 20%",
+        type = ShopItemType.FIRE_RATE,
+        baseCost = 15,
+        tier = 1
+    ))
+
+    items.add(ShopItem(
+        id = "bullet_speed",
+        name = "Bullet Velocity",
+        description = "Increase bullet speed by 30%",
+        type = ShopItemType.BULLET_SPEED,
+        baseCost = 12,
+        tier = 1
+    ))
+
+    items.add(ShopItem(
+        id = "score_boost",
+        name = "Score Amplifier",
+        description = "+15% score from all sources",
+        type = ShopItemType.SCORE_BOOST,
+        baseCost = 20,
+        tier = 1
+    ))
+
+    items.add(ShopItem(
+        id = "currency_boost",
+        name = "Currency Magnet",
+        description = "+15% $M gain",
+        type = ShopItemType.CURRENCY_BOOST,
+        baseCost = 25,
+        tier = 1
+    ))
+
+    // High-risk items (only after 60s)
+    if (allowHighRisk) {
+        items.add(ShopItem(
+            id = "glass_cannon",
+            name = "Glass Cannon",
+            description = "+40% gains but -30% health",
+            type = ShopItemType.GLASS_CANNON,
+            baseCost = 50,
+            isHighRisk = true,
+            tier = 2
+        ))
+
+        items.add(ShopItem(
+            id = "debt_advance",
+            name = "Debt Advance",
+            description = "Gain +50 $M now, +50% costs for 2 shops",
+            type = ShopItemType.DEBT_ADVANCE,
+            baseCost = 10,
+            isHighRisk = true,
+            tier = 2
+        ))
+
+        items.add(ShopItem(
+            id = "survival_challenge",
+            name = "Survival Trial",
+            description = "Enemies +25% speed for 30s. Survive = +0.15 to multiplier 'a'",
+            type = ShopItemType.SURVIVAL_CHALLENGE,
+            baseCost = 40,
+            isHighRisk = true,
+            tier = 3
+        ))
+
+        items.add(ShopItem(
+            id = "extreme_multiplier",
+            name = "Overcharge (ONE TIME)",
+            description = "Double $M gain permanently. Disabled: Shields",
+            type = ShopItemType.EXTREME_MULTIPLIER,
+            baseCost = 80,
+            isHighRisk = true,
+            tier = 3
+        ))
+    }
+
+    return items
 }
 
 @Composable
@@ -257,6 +405,19 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
     var currentMultiplier by remember { mutableDoubleStateOf(1.0) }
     var isAlive by remember { mutableStateOf(true) }
 
+    // Shop state
+    val shopIntervalSeconds = 30
+    var shopIndex by remember { mutableIntStateOf(0) }
+    var isShopOpen by remember { mutableStateOf(false) }
+    var shopAvailableNotification by remember { mutableStateOf(false) }
+    var purchasesThisWindow by remember { mutableIntStateOf(0) }
+    val maxPurchasesPerWindow = 3
+
+    // Player upgrades
+    var playerUpgrades by remember { mutableStateOf(PlayerUpgrades()) }
+    var activeRisk by remember { mutableStateOf<RiskState?>(null) }
+    var permanentMultiplierBonus by remember { mutableDoubleStateOf(0.0) }
+
     // Initialize stars
     LaunchedEffect(Unit) {
         stars = List(50) {
@@ -286,7 +447,13 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
             val survivedMilliseconds = currentTime - gameStartTime
 
             // Calculate time-based multiplier for rewards
-            currentMultiplier = calculateMultiplier(survivedMilliseconds)
+            // Include permanent bonus from survival challenges
+            val baseScalingFactor = 0.6 + permanentMultiplierBonus
+            currentMultiplier = calculateMultiplier(survivedMilliseconds, baseScalingFactor)
+
+            // Apply player upgrades to multiplier
+            val upgradeMultiplier = 1.0 + playerUpgrades.scoreBoostPercent + playerUpgrades.currencyBoostPercent
+            currentMultiplier *= upgradeMultiplier
 
             // Update stars
             stars = stars.map { star ->
@@ -298,9 +465,12 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                 }
             }
 
-            // Auto-fire bullets
-            if (currentTime - lastBulletFire > 200) {
-                bullets = bullets + Bullet(player.x, player.y - player.size / 2)
+            // Auto-fire bullets (with fire rate upgrades)
+            val fireRateDelay = (200 * (1.0 - playerUpgrades.fireRateLevel * 0.2).coerceAtLeast(0.2)).toLong()
+            if (currentTime - lastBulletFire > fireRateDelay) {
+                // Apply bullet speed upgrade
+                val bulletSpeed = 20f * (1f + playerUpgrades.bulletSpeedLevel * 0.3f)
+                bullets = bullets + Bullet(player.x, player.y - player.size / 2, bulletSpeed)
                 lastBulletFire = currentTime
             }
 
@@ -330,45 +500,48 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
             }
 
             // Update enemies with different behaviors
+            // Apply challenge speed modifier if active
+            val challengeSpeedMultiplier = if (activeRisk?.type == ShopItemType.SURVIVAL_CHALLENGE && activeRisk?.isActive == true) 1.25f else 1.0f
+
             enemies = enemies.mapNotNull { enemy ->
                 val updatedEnemy = enemy.copy(timeAlive = enemy.timeAlive + 0.016f)
 
                 when (updatedEnemy.type) {
                     0 -> {
                         // Straight down
-                        val newY = updatedEnemy.y + updatedEnemy.speed * 4
+                        val newY = updatedEnemy.y + updatedEnemy.speed * 4 * challengeSpeedMultiplier
                         if (newY > screenHeight + 100) null
                         else updatedEnemy.copy(y = newY)
                     }
                     1 -> {
                         // Zigzag pattern
-                        val newY = updatedEnemy.y + updatedEnemy.speed * 3
+                        val newY = updatedEnemy.y + updatedEnemy.speed * 3 * challengeSpeedMultiplier
                         val zigzagX = updatedEnemy.x + sin(updatedEnemy.timeAlive * 3f) * 5f
                         if (newY > screenHeight + 100) null
                         else updatedEnemy.copy(x = zigzagX.coerceIn(0f, screenWidth), y = newY)
                     }
                     2 -> {
                         // Follow player horizontally
-                        val newY = updatedEnemy.y + updatedEnemy.speed * 3
+                        val newY = updatedEnemy.y + updatedEnemy.speed * 3 * challengeSpeedMultiplier
                         val targetX = if (player.x > updatedEnemy.x) updatedEnemy.x + 3f else updatedEnemy.x - 3f
                         if (newY > screenHeight + 100) null
                         else updatedEnemy.copy(x = targetX.coerceIn(0f, screenWidth), y = newY)
                     }
                     3 -> {
                         // Fast straight down
-                        val newY = updatedEnemy.y + updatedEnemy.speed * 4
+                        val newY = updatedEnemy.y + updatedEnemy.speed * 4 * challengeSpeedMultiplier
                         if (newY > screenHeight + 100) null
                         else updatedEnemy.copy(y = newY)
                     }
                     4 -> {
                         // Diagonal swoop
-                        val newY = updatedEnemy.y + updatedEnemy.speed * 3
+                        val newY = updatedEnemy.y + updatedEnemy.speed * 3 * challengeSpeedMultiplier
                         val swoopX = updatedEnemy.x + cos(updatedEnemy.timeAlive * 2f) * 4f
                         if (newY > screenHeight + 100) null
                         else updatedEnemy.copy(x = swoopX.coerceIn(0f, screenWidth), y = newY)
                     }
                     else -> {
-                        val newY = updatedEnemy.y + updatedEnemy.speed * 4
+                        val newY = updatedEnemy.y + updatedEnemy.speed * 4 * challengeSpeedMultiplier
                         if (newY > screenHeight + 100) null
                         else updatedEnemy.copy(y = newY)
                     }
@@ -449,6 +622,44 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                 // Remove notifications after 2 seconds
                 if (updatedNotif.timeAlive > 2f) null
                 else updatedNotif
+            }
+
+            // Shop timing logic - Opens every 30 seconds
+            val survivedSeconds = survivedMilliseconds / 1000
+            val currentShopIndex = (survivedSeconds / shopIntervalSeconds).toInt()
+
+            if (currentShopIndex > shopIndex && !isShopOpen) {
+                // New shop window available
+                shopIndex = currentShopIndex
+                shopAvailableNotification = true
+                purchasesThisWindow = 0
+
+                // Decrement debt penalty counter
+                if (playerUpgrades.debtPenaltyShopsRemaining > 0) {
+                    playerUpgrades = playerUpgrades.copy(
+                        debtPenaltyShopsRemaining = playerUpgrades.debtPenaltyShopsRemaining - 1
+                    )
+                }
+            }
+
+            // Auto-hide shop notification after 3 seconds
+            if (shopAvailableNotification && (survivedSeconds % shopIntervalSeconds) > 3) {
+                shopAvailableNotification = false
+            }
+
+            // Update active risk challenges
+            activeRisk?.let { risk ->
+                risk.timeRemaining -= 16 // Decrease by frame time
+                if (risk.timeRemaining <= 0) {
+                    if (isAlive && risk.isActive) {
+                        // Successfully completed challenge
+                        risk.onSuccess()
+                    } else {
+                        // Failed challenge
+                        risk.onFailure()
+                    }
+                    activeRisk = null
+                }
             }
         }
 
@@ -555,6 +766,104 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
             )
         }
 
+        // Shop available notification
+        if (shopAvailableNotification && !isShopOpen) {
+            Card(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 100.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xDD00FF00) // Green with transparency
+                )
+            ) {
+                Text(
+                    text = "🛒 SHOP AVAILABLE",
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.Black,
+                    modifier = Modifier.padding(16.dp)
+                )
+            }
+        }
+
+        // Shop access button (visible when shop is available)
+        if (!isShopOpen && shopIndex > 0 && !isAlive.not()) {
+            Button(
+                onClick = { isShopOpen = true },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(16.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF00FF00)
+                )
+            ) {
+                Text(
+                    text = "SHOP",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.Black
+                )
+            }
+        }
+
+        // Shop overlay
+        if (isShopOpen) {
+            ShopOverlay(
+                currentCurrency = earnedCurrency,
+                shopIndex = shopIndex,
+                shopItems = generateShopItems(shopIndex, (System.currentTimeMillis() - 0) / 1000),
+                playerUpgrades = playerUpgrades,
+                purchasesRemaining = maxPurchasesPerWindow - purchasesThisWindow,
+                onPurchase = { item ->
+                    val debtMultiplier = if (playerUpgrades.debtPenaltyShopsRemaining > 0) 1.5 else 1.0
+                    val cost = calculateItemCost(item.baseCost, shopIndex, debtMultiplier)
+
+                    if (earnedCurrency >= cost && purchasesThisWindow < maxPurchasesPerWindow) {
+                        earnedCurrency -= cost
+                        purchasesThisWindow++
+
+                        // Apply upgrade effects
+                        when (item.type) {
+                            ShopItemType.FIRE_RATE -> playerUpgrades = playerUpgrades.copy(fireRateLevel = playerUpgrades.fireRateLevel + 1)
+                            ShopItemType.BULLET_SPEED -> playerUpgrades = playerUpgrades.copy(bulletSpeedLevel = playerUpgrades.bulletSpeedLevel + 1)
+                            ShopItemType.SCORE_BOOST -> playerUpgrades = playerUpgrades.copy(scoreBoostPercent = playerUpgrades.scoreBoostPercent + 0.15)
+                            ShopItemType.CURRENCY_BOOST -> playerUpgrades = playerUpgrades.copy(currencyBoostPercent = playerUpgrades.currencyBoostPercent + 0.15)
+                            ShopItemType.GLASS_CANNON -> {
+                                playerUpgrades = playerUpgrades.copy(
+                                    glassCannonActive = true,
+                                    scoreBoostPercent = playerUpgrades.scoreBoostPercent + 0.4,
+                                    currencyBoostPercent = playerUpgrades.currencyBoostPercent + 0.4
+                                )
+                            }
+                            ShopItemType.DEBT_ADVANCE -> {
+                                earnedCurrency += 50
+                                playerUpgrades = playerUpgrades.copy(debtPenaltyShopsRemaining = 2)
+                            }
+                            ShopItemType.SURVIVAL_CHALLENGE -> {
+                                // Activate challenge: +25% enemy speed for 30s
+                                activeRisk = RiskState(
+                                    type = ShopItemType.SURVIVAL_CHALLENGE,
+                                    description = "Survive 30s with faster enemies",
+                                    timeRemaining = 30000,
+                                    onSuccess = {
+                                        permanentMultiplierBonus += 0.15
+                                    },
+                                    onFailure = { /* No reward */ }
+                                )
+                            }
+                            ShopItemType.EXTREME_MULTIPLIER -> {
+                                playerUpgrades = playerUpgrades.copy(
+                                    extremeMultiplierActive = true,
+                                    currencyBoostPercent = playerUpgrades.currencyBoostPercent + 1.0 // Double
+                                )
+                            }
+                        }
+                    }
+                },
+                onClose = { isShopOpen = false }
+            )
+        }
+
         if (!isAlive) {
             Text(
                 text = "GAME OVER",
@@ -563,6 +872,157 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                 color = Color.Red,
                 modifier = Modifier.align(Alignment.Center)
             )
+        }
+    }
+}
+
+@Composable
+fun ShopOverlay(
+    currentCurrency: Int,
+    shopIndex: Int,
+    shopItems: List<ShopItem>,
+    playerUpgrades: PlayerUpgrades,
+    purchasesRemaining: Int,
+    onPurchase: (ShopItem) -> Unit,
+    onClose: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xCC000000)) // Semi-transparent black
+            .pointerInput(Unit) { /* Block touches */ },
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth(0.9f)
+                .fillMaxHeight(0.8f),
+            colors = CardDefaults.cardColors(
+                containerColor = Color(0xFF001122)
+            )
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "🛒 SHOP #${shopIndex + 1}",
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF00FF00)
+                    )
+                    Button(
+                        onClick = onClose,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color.Red
+                        )
+                    ) {
+                        Text("X", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Currency display
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Your $M: ",
+                        fontSize = 20.sp,
+                        color = Color.White
+                    )
+                    Text(
+                        text = "$currentCurrency",
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF00FF00)
+                    )
+                }
+
+                Text(
+                    text = "Purchases remaining: $purchasesRemaining",
+                    fontSize = 16.sp,
+                    color = Color(0xFFFFD700),
+                    modifier = Modifier.padding(vertical = 8.dp)
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Shop items list
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    shopItems.forEach { item ->
+                        val debtMultiplier = if (playerUpgrades.debtPenaltyShopsRemaining > 0) 1.5 else 1.0
+                        val cost = calculateItemCost(item.baseCost, shopIndex, debtMultiplier)
+                        val canAfford = currentCurrency >= cost
+                        val canPurchase = canAfford && purchasesRemaining > 0
+
+                        // Filter out already purchased one-time items
+                        val shouldShow = when (item.type) {
+                            ShopItemType.EXTREME_MULTIPLIER -> !playerUpgrades.extremeMultiplierActive
+                            else -> true
+                        }
+
+                        if (shouldShow) {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (item.isHighRisk) Color(0xFF330000) else Color(0xFF003333)
+                                )
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = if (item.isHighRisk) "⚠️ ${item.name}" else item.name,
+                                            fontSize = 18.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (item.isHighRisk) Color(0xFFFF4444) else Color.White
+                                        )
+                                        Text(
+                                            text = item.description,
+                                            fontSize = 14.sp,
+                                            color = Color(0xFFCCCCCC)
+                                        )
+                                    }
+
+                                    Button(
+                                        onClick = { if (canPurchase) onPurchase(item) },
+                                        enabled = canPurchase,
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (item.isHighRisk) Color(0xFFFF4444) else Color(0xFF00FF00),
+                                            disabledContainerColor = Color.Gray
+                                        )
+                                    ) {
+                                        Text(
+                                            text = "$cost $M",
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.Black
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

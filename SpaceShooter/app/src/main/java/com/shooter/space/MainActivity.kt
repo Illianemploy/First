@@ -171,7 +171,7 @@ private fun calculateMultiplier(
  * @return Scaled cost
  */
 private fun calculateItemCost(baseCost: Int, shopIndex: Int, debtPenalty: Double = 1.0): Int {
-    val scaledCost = baseCost * (1.0 + kotlin.math.pow(shopIndex.toDouble(), 0.6))
+    val scaledCost = baseCost * (1.0 + shopIndex.toDouble().pow(0.6))
     return (scaledCost * debtPenalty).toInt()
 }
 
@@ -219,7 +219,7 @@ private fun generateShopItems(shopIndex: Int, survivedSeconds: Long): List<ShopI
     items.add(ShopItem(
         id = "currency_boost",
         name = "Currency Magnet",
-        description = "+15% $M gain",
+        description = "+15% \$M gain",
         type = ShopItemType.CURRENCY_BOOST,
         baseCost = 25,
         tier = 1
@@ -240,7 +240,7 @@ private fun generateShopItems(shopIndex: Int, survivedSeconds: Long): List<ShopI
         items.add(ShopItem(
             id = "debt_advance",
             name = "Debt Advance",
-            description = "Gain +50 $M now, +50% costs for 2 shops",
+            description = "Gain +50 \$M now, +50% costs for 2 shops",
             type = ShopItemType.DEBT_ADVANCE,
             baseCost = 10,
             isHighRisk = true,
@@ -260,7 +260,7 @@ private fun generateShopItems(shopIndex: Int, survivedSeconds: Long): List<ShopI
         items.add(ShopItem(
             id = "extreme_multiplier",
             name = "Overcharge (ONE TIME)",
-            description = "Double $M gain permanently. Disabled: Shields",
+            description = "Double \$M gain permanently. Disabled: Shields",
             type = ShopItemType.EXTREME_MULTIPLIER,
             baseCost = 80,
             isHighRisk = true,
@@ -350,7 +350,7 @@ fun MenuScreen(highScore: Int, currency: Int, onStartGame: () -> Unit) {
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
-                            "Your $M: ",
+                            "Your \$M: ",
                             fontSize = 20.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White
@@ -589,10 +589,10 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                 lastScoreUpdate = currentTime
             }
 
-            // Award currency ($M) periodically with multiplier
+            // Award currency (\$M) periodically with multiplier
             // Award every 1 second to make notifications meaningful
             if (currentTime - lastCurrencyAward > 1000) {
-                // Base currency award: 1 $M per second
+                // Base currency award: 1 \$M per second
                 val baseCurrency = 1
                 val awardedCurrency = (baseCurrency * currentMultiplier).toInt()
 
@@ -744,7 +744,7 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Earned $M: ",
+                    text = "Earned \$M: ",
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
@@ -936,7 +936,7 @@ fun ShopOverlay(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Your $M: ",
+                        text = "Your \$M: ",
                         fontSize = 20.sp,
                         color = Color.White
                     )
@@ -1011,7 +1011,7 @@ fun ShopOverlay(
                                         )
                                     ) {
                                         Text(
-                                            text = "$cost $M",
+                                            text = "$cost \$M",
                                             fontSize = 16.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = Color.Black
@@ -1153,7 +1153,7 @@ fun DrawScope.drawExplosion(player: Player) {
 
 /**
  * Draws a currency notification that floats up and fades out.
- * Shows the amount of $M earned in green text.
+ * Shows the amount of \$M earned in green text.
  *
  * @param notification The currency notification to draw
  */

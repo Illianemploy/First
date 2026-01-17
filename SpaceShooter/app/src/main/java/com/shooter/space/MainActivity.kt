@@ -438,13 +438,21 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
         var lastScoreUpdate = gameStartTime
         var lastCurrencyAward = gameStartTime
         var gameTime = 0f
+        var pausedTime = 0L // Track time spent in shop
 
         while (isActive && isAlive) {
             delay(16) // ~60 FPS
+
+            // Skip all game updates when shop is open (pause the game)
+            if (isShopOpen) {
+                pausedTime += 16
+                continue
+            }
+
             gameTime += 0.016f
 
             val currentTime = System.currentTimeMillis()
-            val survivedMilliseconds = currentTime - gameStartTime
+            val survivedMilliseconds = currentTime - gameStartTime - pausedTime
 
             // Calculate time-based multiplier for rewards
             // Include permanent bonus from survival challenges

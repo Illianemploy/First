@@ -109,6 +109,160 @@ data class RiskState(
     val onFailure: () -> Unit
 )
 
+// Scrolling background system
+data class Background(
+    val bitmap: ImageBitmap,
+    var y: Float
+)
+
+/**
+ * Manages seamless infinitely scrolling vertical backgrounds.
+ * Loads backgrounds on-demand and recycles them to minimize memory usage.
+ * Guarantees no visual gaps or stutter with deterministic looping.
+ */
+class ScrollingBackgroundManager(
+    private val context: Context,
+    private val screenWidth: Float,
+    private val screenHeight: Float
+) {
+    private val backgroundList: List<String> = listOf(
+        "hello_purple_background01",
+        "hello_purple_background02",
+        "hello_purple_background03",
+        "misty_red_background01",
+        "misty_red_background02",
+        "misty_red_background03"
+    )
+
+    private val activeBackgrounds: MutableList<Background> = mutableListOf()
+    private var currentBackgroundIndex: Int = 0
+    private val scrollSpeed: Float = 2.0f // pixels per frame (~120 px/sec at 60 FPS)
+
+    /**
+     * Loads a background bitmap from resources by name.
+     * Scales the bitmap to fit screen dimensions while maintaining aspect ratio.
+     */
+    private fun loadBackground(resourceName: String): ImageBitmap {
+        val resourceId = context.resources.getIdentifier(
+            resourceName,
+            "drawable",
+            context.packageName
+        )
+
+        // Load with efficient options
+        val options = BitmapFactory.Options().apply {
+            inPreferredConfig = android.graphics.Bitmap.Config.RGB_565 // Use less memory for backgrounds
+            inScaled = false
+        }
+
+        val bitmap = BitmapFactory.decodeResource(context.resources, resourceId, options)
+
+        // Scale bitmap to screen dimensions (maintain aspect ratio, crop if needed)
+        val scaledBitmap = android.graphics.Bitmap.createScaledBitmap(
+            bitmap,
+            screenWidth.toInt(),
+            screenHeight.toInt(),
+            true // Use bilinear filtering for smooth scaling
+        )
+
+        // Recycle original if different from scaled
+        if (bitmap != scaledBitmap) {
+            bitmap.recycle()
+        }
+
+        return scaledBitmap.asImageBitmap()
+    }
+
+    /**
+     * Initializes the background system by loading the first two backgrounds.
+     * Background 1 starts at y = 0 (visible on screen)
+     * Background 2 starts at y = -screenHeight (directly above, ready to scroll in)
+     */
+    fun initialize() {
+        // Clear any existing backgrounds
+        activeBackgrounds.clear()
+        currentBackgroundIndex = 0
+
+        // Load first background (visible)
+        val firstBg = Background(
+            bitmap = loadBackground(backgroundList[0]),
+            y = 0f
+        )
+        activeBackgrounds.add(firstBg)
+
+        // Load second background (above first, ready to scroll in)
+        val secondBg = Background(
+            bitmap = loadBackground(backgroundList[1]),
+            y = -screenHeight
+        )
+        activeBackgrounds.add(secondBg)
+
+        currentBackgroundIndex = 1 // Next background to load will be index 2
+    }
+
+    /**
+     * Updates background positions and handles recycling.
+     * Called every frame with delta time.
+     */
+    fun update(deltaTime: Float) {
+        // Scroll all active backgrounds downward
+        activeBackgrounds.forEach { bg ->
+            bg.y += scrollSpeed
+        }
+
+        // Check if the bottom-most background has scrolled off-screen
+        val bottomBackground = activeBackgrounds.firstOrNull()
+        if (bottomBackground != null && bottomBackground.y >= screenHeight) {
+            // Remove the off-screen background
+            activeBackgrounds.removeAt(0)
+
+            // Calculate next background index (wrap around)
+            val nextIndex = (currentBackgroundIndex + 1) % backgroundList.size
+
+            // Find the top-most background to position the new one above it
+            val topBackground = activeBackgrounds.lastOrNull()
+            val newY = if (topBackground != null) {
+                topBackground.y - screenHeight
+            } else {
+                -screenHeight
+            }
+
+            // Load next background and position it above
+            val newBackground = Background(
+                bitmap = loadBackground(backgroundList[nextIndex]),
+                y = newY
+            )
+            activeBackgrounds.add(newBackground)
+
+            // Update current index
+            currentBackgroundIndex = nextIndex
+        }
+    }
+
+    /**
+     * Draws all active backgrounds to the canvas.
+     * Draws from back to front (bottom to top of list).
+     */
+    fun draw(drawScope: DrawScope) {
+        activeBackgrounds.forEach { bg ->
+            drawScope.drawImage(
+                image = bg.bitmap,
+                dstOffset = IntOffset(0, bg.y.toInt()),
+                dstSize = IntSize(screenWidth.toInt(), screenHeight.toInt())
+            )
+        }
+    }
+
+    /**
+     * Resets the background system to the initial state.
+     * Useful for level restart or respawn.
+     */
+    fun reset() {
+        activeBackgrounds.clear()
+        initialize()
+    }
+}
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -439,6 +593,11 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
         BitmapFactory.decodeResource(context.resources, R.drawable.space_center02).asImageBitmap()
     }
 
+    // Initialize scrolling background manager
+    val backgroundManager = remember {
+        ScrollingBackgroundManager(context, screenWidth, screenHeight)
+    }
+
     var player by remember { mutableStateOf(Player(screenWidth / 2, screenHeight - 150f)) }
     var enemies by remember { mutableStateOf<List<Enemy>>(emptyList()) }
     var bullets by remember { mutableStateOf<List<Bullet>>(emptyList()) }
@@ -476,8 +635,11 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
     var activeRisk by remember { mutableStateOf<RiskState?>(null) }
     var permanentMultiplierBonus by remember { mutableDoubleStateOf(0.0) }
 
-    // Initialize stars with parallax layers
+    // Initialize scrolling backgrounds and parallax layers
     LaunchedEffect(Unit) {
+        // Initialize scrolling background system
+        backgroundManager.initialize()
+
         stars = List(100) {
             val layer = Random.nextInt(3) // 0 = far, 1 = mid, 2 = near
             Star(
@@ -614,6 +776,9 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
             }
 
             gameTime += 0.016f
+
+            // Update scrolling backgrounds
+            backgroundManager.update(0.016f)
 
             // Calculate time-based multiplier for rewards
             // Include permanent bonus from survival challenges
@@ -944,15 +1109,6 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            Color(0xFF000033),
-                            Color(0xFF000055),
-                            Color(0xFF000033)
-                        )
-                    )
-                )
                 .pointerInput(Unit) {
                     detectDragGestures { change, dragAmount ->
                         change.consume()
@@ -965,6 +1121,9 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                     }
                 }
         ) {
+            // Draw scrolling backgrounds (first layer - behind everything)
+            backgroundManager.draw(this)
+
             // Draw nebulae (background clouds)
             nebulae.forEach { nebula ->
                 drawCircle(

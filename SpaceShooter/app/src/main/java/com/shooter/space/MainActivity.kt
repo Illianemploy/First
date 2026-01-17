@@ -1,9 +1,12 @@
 package com.shooter.space
 
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -15,6 +18,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -40,7 +45,7 @@ import kotlin.random.Random
 // Game entities
 data class Star(val x: Float, val y: Float, val size: Float, val speed: Float, val layer: Int = 0)
 data class Enemy(val x: Float, var y: Float, val size: Float, val speed: Float, val type: Int, var timeAlive: Float = 0f, var rotation: Float = 0f)
-data class Player(var x: Float, var y: Float, val size: Float = 60f)
+data class Player(var x: Float, var y: Float, val size: Float = 60f, var velocityX: Float = 0f, var velocityY: Float = 0f)
 data class Bullet(val x: Float, var y: Float, val speed: Float = 20f)
 data class CurrencyNotification(val x: Float, val y: Float, val amount: Int, var alpha: Float = 1f, var timeAlive: Float = 0f)
 
@@ -394,9 +399,15 @@ fun MenuScreen(highScore: Int, currency: Int, onStartGame: () -> Unit) {
 fun GameScreen(onGameOver: (Int, Int) -> Unit) {
     val configuration = LocalConfiguration.current
     val density = LocalDensity.current
+    val context = LocalContext.current
 
     val screenWidth = with(density) { configuration.screenWidthDp.dp.toPx() }
     val screenHeight = with(density) { configuration.screenHeightDp.dp.toPx() }
+
+    // Load player sprite sheet
+    val playerSprite = remember {
+        BitmapFactory.decodeResource(context.resources, R.drawable.player_ship).asImageBitmap()
+    }
 
     var player by remember { mutableStateOf(Player(screenWidth / 2, screenHeight - 150f)) }
     var enemies by remember { mutableStateOf<List<Enemy>>(emptyList()) }
@@ -559,6 +570,12 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
             if (damageFlashAlpha > 0f) {
                 damageFlashAlpha = (damageFlashAlpha - 0.05f).coerceAtLeast(0f)
             }
+
+            // Apply velocity decay to player (smooth return to center tilt)
+            player = player.copy(
+                velocityX = player.velocityX * 0.85f,
+                velocityY = player.velocityY * 0.85f
+            )
 
             // Auto-fire bullets (with fire rate upgrades)
             val fireRateDelay = (200 * (1.0 - playerUpgrades.fireRateLevel * 0.2).coerceAtLeast(0.2)).toLong()
@@ -843,7 +860,9 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                         change.consume()
                         player = player.copy(
                             x = (player.x + dragAmount.x).coerceIn(0f, screenWidth),
-                            y = (player.y + dragAmount.y).coerceIn(0f, screenHeight)
+                            y = (player.y + dragAmount.y).coerceIn(0f, screenHeight),
+                            velocityX = dragAmount.x,
+                            velocityY = dragAmount.y
                         )
                     }
                 }
@@ -917,7 +936,7 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
 
             // Draw player with thruster effects
             if (isAlive) {
-                drawPlayer(player)
+                drawPlayer(player, playerSprite)
                 // Draw thrusters
                 drawThrusters(player, gameTime)
             } else {
@@ -1257,59 +1276,47 @@ fun ShopOverlay(
     }
 }
 
-// Draw player spaceship with enhanced visuals
-fun DrawScope.drawPlayer(player: Player) {
+// Draw player spaceship using sprite sheet
+fun DrawScope.drawPlayer(player: Player, spriteSheet: ImageBitmap) {
     val centerX = player.x
     val centerY = player.y
     val size = player.size
 
-    // Draw spaceship as a triangle with glow
-    val path = Path().apply {
-        moveTo(centerX, centerY - size / 2)
-        lineTo(centerX - size / 3, centerY + size / 2)
-        lineTo(centerX + size / 3, centerY + size / 2)
-        close()
+    // Sprite sheet layout: 2 rows × 5 columns
+    val totalColumns = 5
+    val totalRows = 2
+    val frameWidth = spriteSheet.width / totalColumns
+    val frameHeight = spriteSheet.height / totalRows
+
+    // Determine column based on horizontal velocity (tilt)
+    // Column 0: fully left, 1: slightly left, 2: center, 3: slightly right, 4: fully right
+    val column = when {
+        player.velocityX < -5f -> 0      // Fully left
+        player.velocityX < -1f -> 1      // Slightly left
+        player.velocityX > 5f -> 4       // Fully right
+        player.velocityX > 1f -> 3       // Slightly right
+        else -> 2                         // Center
     }
 
-    // Outer glow (larger)
-    drawPath(
-        path = path,
-        color = Color.Cyan,
-        alpha = 0.15f,
-        style = Stroke(width = 12f)
-    )
+    // Determine row based on vertical velocity (thrust state)
+    // Row 0: normal/idle, Row 1: thrusting/moving up
+    val row = if (player.velocityY < -2f) 1 else 0
 
-    // Inner glow
-    drawPath(
-        path = path,
-        color = Color.Cyan,
-        alpha = 0.4f,
-        style = Stroke(width = 6f)
-    )
+    // Calculate source rectangle (which part of sprite sheet to draw)
+    val srcOffset = IntOffset(column * frameWidth, row * frameHeight)
+    val srcSize = IntSize(frameWidth, frameHeight)
 
-    // Main ship with gradient
-    drawPath(
-        path = path,
-        brush = Brush.verticalGradient(
-            colors = listOf(
-                Color.Cyan,
-                Color(0xFF00D9FF),
-                Color(0xFF0088FF)
-            )
-        )
-    )
+    // Calculate destination position (centered on player position)
+    val destOffset = Offset(centerX - size / 2, centerY - size / 2)
+    val destSize = Size(size, size)
 
-    // Cockpit with glow
-    drawCircle(
-        color = Color(0xFF00FFFF),
-        radius = size / 5 + 3f,
-        center = Offset(centerX, centerY - size / 6),
-        alpha = 0.3f
-    )
-    drawCircle(
-        color = Color(0xFF00FFFF),
-        radius = size / 6,
-        center = Offset(centerX, centerY - size / 6)
+    // Draw the sprite frame
+    drawImage(
+        image = spriteSheet,
+        srcOffset = srcOffset,
+        srcSize = srcSize,
+        dstOffset = destOffset,
+        dstSize = destSize
     )
 }
 

@@ -415,6 +415,7 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
     var earnedCurrency by remember { mutableIntStateOf(0) }
     var currentMultiplier by remember { mutableDoubleStateOf(1.0) }
     var isAlive by remember { mutableStateOf(true) }
+    var gameTime by remember { mutableFloatStateOf(0f) }
 
     // Shop state
     val shopIntervalSeconds = 30
@@ -473,7 +474,6 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
         var lastBulletFire = 0L
         var lastScoreUpdate = gameStartTime
         var lastCurrencyAward = gameStartTime
-        var gameTime = 0f
         var pausedTime = 0L // Track time spent in shop
 
         while (isActive && isAlive) {

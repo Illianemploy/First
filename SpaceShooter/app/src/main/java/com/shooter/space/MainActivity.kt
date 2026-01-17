@@ -1307,8 +1307,8 @@ fun DrawScope.drawPlayer(player: Player, spriteSheet: ImageBitmap) {
     val srcSize = IntSize(frameWidth, frameHeight)
 
     // Calculate destination position (centered on player position)
-    val destOffset = Offset(centerX - size / 2, centerY - size / 2)
-    val destSize = Size(size, size)
+    val destOffset = IntOffset((centerX - size / 2).toInt(), (centerY - size / 2).toInt())
+    val destSize = IntSize(size.toInt(), size.toInt())
 
     // Draw the sprite frame
     drawImage(

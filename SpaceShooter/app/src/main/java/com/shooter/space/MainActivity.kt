@@ -455,6 +455,7 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
     var spaceCenter by remember { mutableStateOf<SpaceCenter?>(null) }
     var playerInsideShop by remember { mutableStateOf(false) }
     var shopExitTime by remember { mutableLongStateOf(0L) }
+    var canAutoOpenShop by remember { mutableStateOf(true) }  // Debounce flag
 
     // Game state
     var score by remember { mutableIntStateOf(0) }
@@ -587,15 +588,22 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                 val wasInsideShop = playerInsideShop
                 playerInsideShop = distance < interactionRadius
 
-                // Open shop when entering zone
-                if (playerInsideShop && !isShopOpen) {
-                    isShopOpen = true
+                // Detect when player exits the interaction zone
+                if (!playerInsideShop && wasInsideShop) {
+                    // Player has left the zone - allow future shop entries
+                    canAutoOpenShop = true
+
+                    // Auto-close shop if it's open when player exits zone
+                    if (isShopOpen) {
+                        isShopOpen = false
+                        shopExitTime = currentTime
+                    }
                 }
 
-                // Auto-close shop when leaving zone (only if shop is open and player moved out)
-                if (!playerInsideShop && wasInsideShop && isShopOpen) {
-                    isShopOpen = false
-                    shopExitTime = currentTime
+                // Auto-open shop only when entering zone for the first time (debounce)
+                if (playerInsideShop && !isShopOpen && canAutoOpenShop) {
+                    isShopOpen = true
+                    canAutoOpenShop = false  // Prevent reopening until player exits zone
                 }
             }
 

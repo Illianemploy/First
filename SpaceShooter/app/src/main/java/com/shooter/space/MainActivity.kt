@@ -436,7 +436,7 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
 
     // Load space center sprite
     val spaceCenterSprite = remember {
-        BitmapFactory.decodeResource(context.resources, R.drawable.space_center01).asImageBitmap()
+        BitmapFactory.decodeResource(context.resources, R.drawable.space_center02).asImageBitmap()
     }
 
     var player by remember { mutableStateOf(Player(screenWidth / 2, screenHeight - 150f)) }

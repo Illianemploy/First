@@ -44,7 +44,16 @@ import kotlin.random.Random
 
 // Game entities
 data class Star(val x: Float, val y: Float, val size: Float, val speed: Float, val layer: Int = 0)
-data class Enemy(val x: Float, var y: Float, val size: Float, val speed: Float, val type: Int, var timeAlive: Float = 0f, var rotation: Float = 0f)
+data class Enemy(
+    val x: Float,
+    var y: Float,
+    val size: Float,
+    val speed: Float,
+    val type: Int,
+    var timeAlive: Float = 0f,
+    var rotation: Float = 0f,
+    val spriteVariant: Int = 0  // 0 = left/orange, 1 = right/blue
+)
 data class Player(var x: Float, var y: Float, val size: Float = 60f, var velocityX: Float = 0f, var velocityY: Float = 0f)
 data class Bullet(val x: Float, var y: Float, val speed: Float = 20f)
 data class CurrencyNotification(val x: Float, val y: Float, val amount: Int, var alpha: Float = 1f, var timeAlive: Float = 0f)
@@ -409,6 +418,11 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
         BitmapFactory.decodeResource(context.resources, R.drawable.player_ship).asImageBitmap()
     }
 
+    // Load asteroid sprite sheet (2 columns × 3 rows)
+    val asteroidSprite = remember {
+        BitmapFactory.decodeResource(context.resources, R.drawable.asteroids).asImageBitmap()
+    }
+
     var player by remember { mutableStateOf(Player(screenWidth / 2, screenHeight - 150f)) }
     var enemies by remember { mutableStateOf<List<Enemy>>(emptyList()) }
     var bullets by remember { mutableStateOf<List<Bullet>>(emptyList()) }
@@ -601,12 +615,13 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                     y = -50f,
                     size = 50f,
                     speed = when (enemyType) {
-                        3 -> Random.nextFloat() * 2f + 5f // Fast enemy
+                        3 -> Random.nextFloat() * 2f + 5f // Fast enemy (small asteroid)
                         else -> Random.nextFloat() * 3f + 2f
                     },
                     type = enemyType,
                     timeAlive = 0f,
-                    rotation = Random.nextFloat() * 360f
+                    rotation = Random.nextFloat() * 360f,
+                    spriteVariant = Random.nextInt(2) // 0 = orange, 1 = blue
                 )
                 enemies = enemies + newEnemy
                 lastSpawn = currentTime
@@ -682,12 +697,12 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                         val earnedPoints = (basePoints * currentMultiplier).toInt()
                         score += earnedPoints
 
-                        // Create hit spark particles
-                        val enemyColors = listOf(
-                            Color.Red, Color.Magenta, Color(0xFF00FF00),
-                            Color(0xFFFF4500), Color.Yellow
-                        )
-                        val sparkColor = enemyColors[enemy.type % enemyColors.size]
+                        // Create hit spark particles matching asteroid color
+                        val sparkColor = if (enemy.spriteVariant == 0) {
+                            Color(0xFFFF6633) // Orange for orange asteroids
+                        } else {
+                            Color(0xFF6688FF) // Blue for blue asteroids
+                        }
 
                         repeat(8) { i ->
                             val angle = (i * 45f) * Math.PI / 180f
@@ -703,7 +718,13 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                             )
                         }
 
-                        // Create explosion particles
+                        // Create explosion particles matching asteroid color
+                        val explosionColors = if (enemy.spriteVariant == 0) {
+                            listOf(Color(0xFFFF8844), Color(0xFFFFAA44), Color.Yellow)
+                        } else {
+                            listOf(Color(0xFF6688FF), Color(0xFF88AAFF), Color.Cyan)
+                        }
+
                         repeat(12) {
                             val angle = Random.nextFloat() * 2f * Math.PI
                             val speed = Random.nextFloat() * 4f + 1f
@@ -712,7 +733,7 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                                 y = enemy.y,
                                 vx = (cos(angle) * speed).toFloat(),
                                 vy = (sin(angle) * speed).toFloat() - 2f, // Slight upward bias
-                                color = if (Random.nextBoolean()) Color.Yellow else Color(0xFFFF8800),
+                                color = explosionColors.random(),
                                 maxLife = 0.6f,
                                 size = Random.nextFloat() * 3f + 3f
                             )
@@ -931,7 +952,7 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
 
             // Draw enemies
             enemies.forEach { enemy ->
-                drawEnemy(enemy)
+                drawEnemy(enemy, asteroidSprite)
             }
 
             // Draw player with thruster effects
@@ -1413,69 +1434,67 @@ fun DrawScope.drawBullet(bullet: Bullet) {
     )
 }
 
-// Draw enemy with enhanced visuals and rotation
-fun DrawScope.drawEnemy(enemy: Enemy) {
-    val colors = listOf(
-        listOf(Color.Red, Color(0xFFFF6B6B)),           // Type 0: Straight
-        listOf(Color.Magenta, Color(0xFFFF00FF)),       // Type 1: Zigzag
-        listOf(Color(0xFF00FF00), Color(0xFF88FF88)),  // Type 2: Follower (green)
-        listOf(Color(0xFFFF4500), Color(0xFFFF8C00)),  // Type 3: Fast (orange)
-        listOf(Color.Yellow, Color(0xFFFFAA00))         // Type 4: Swoop
-    )
+// Draw enemy using asteroid sprite sheet
+fun DrawScope.drawEnemy(enemy: Enemy, asteroidSprite: ImageBitmap) {
+    val centerX = enemy.x
+    val centerY = enemy.y
+    val size = enemy.size
 
-    val colorPair = colors[enemy.type % colors.size]
+    // Asteroid sprite sheet layout: 2 columns × 3 rows
+    // Columns: 0 = orange, 1 = blue
+    // Rows: 0 = small (fast), 1 = medium, 2 = large (slow)
+    val totalColumns = 2
+    val totalRows = 3
+    val frameWidth = asteroidSprite.width / totalColumns
+    val frameHeight = asteroidSprite.height / totalRows
 
-    // Draw enemy as a rotating hexagon
-    val path = Path().apply {
-        val radius = enemy.size / 2
-        val centerX = enemy.x
-        val centerY = enemy.y
-        val rotationRad = enemy.rotation * Math.PI / 180f
-
-        for (i in 0..5) {
-            val angle = (i * 60f - 90f) * Math.PI / 180f + rotationRad
-            val x = centerX + (radius * cos(angle)).toFloat()
-            val y = centerY + (radius * sin(angle)).toFloat()
-            if (i == 0) moveTo(x, y) else lineTo(x, y)
-        }
-        close()
+    // Map enemy type to asteroid size row
+    val row = when (enemy.type) {
+        0 -> 1  // Straight Diver: Medium
+        1 -> 1  // Zigzagger: Medium
+        2 -> 2  // Follower: Large
+        3 -> 0  // Speed Demon: Small (fastest)
+        4 -> 2  // Swooper: Large
+        else -> 1
     }
 
-    // Outer glow
-    drawPath(
-        path = path,
-        color = colorPair[0],
-        alpha = 0.3f,
-        style = Stroke(width = 8f)
-    )
+    // Use sprite variant (0 = orange, 1 = blue)
+    val column = enemy.spriteVariant
 
-    // Inner glow
-    drawPath(
-        path = path,
-        color = colorPair[0],
-        alpha = 0.5f,
-        style = Stroke(width = 4f)
-    )
+    // Calculate source rectangle
+    val srcOffset = IntOffset(column * frameWidth, row * frameHeight)
+    val srcSize = IntSize(frameWidth, frameHeight)
 
-    // Main body with gradient
-    drawPath(
-        path = path,
-        brush = Brush.radialGradient(
-            colors = listOf(
-                colorPair[1],
-                colorPair[0],
-                colorPair[0].copy(alpha = 0.8f)
-            ),
-            center = Offset(enemy.x, enemy.y)
-        )
-    )
+    // Calculate destination position (centered on enemy position)
+    val destOffset = IntOffset((centerX - size / 2).toInt(), (centerY - size / 2).toInt())
+    val destSize = IntSize(size.toInt(), size.toInt())
 
-    // Core glow
+    // Draw outer glow for visual consistency
+    val glowColor = if (column == 0) Color(0xFFFF8844) else Color(0xFF8888FF)
     drawCircle(
-        color = Color.White,
-        radius = enemy.size / 6,
-        center = Offset(enemy.x, enemy.y),
-        alpha = 0.6f
+        color = glowColor,
+        radius = size / 2 + 8f,
+        center = Offset(centerX, centerY),
+        alpha = 0.2f
+    )
+
+    // Draw inner glow
+    drawCircle(
+        color = glowColor,
+        radius = size / 2 + 4f,
+        center = Offset(centerX, centerY),
+        alpha = 0.3f
+    )
+
+    // Draw the asteroid sprite
+    // Note: Rotation is handled by the sprite's visual appearance
+    // For true rotation, we'd need to use rotate() transform
+    drawImage(
+        image = asteroidSprite,
+        srcOffset = srcOffset,
+        srcSize = srcSize,
+        dstOffset = destOffset,
+        dstSize = destSize
     )
 }
 

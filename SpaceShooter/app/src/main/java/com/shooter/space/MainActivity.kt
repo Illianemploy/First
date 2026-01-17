@@ -38,11 +38,16 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 // Game entities
-data class Star(val x: Float, val y: Float, val size: Float, val speed: Float)
-data class Enemy(val x: Float, var y: Float, val size: Float, val speed: Float, val type: Int, var timeAlive: Float = 0f)
+data class Star(val x: Float, val y: Float, val size: Float, val speed: Float, val layer: Int = 0)
+data class Enemy(val x: Float, var y: Float, val size: Float, val speed: Float, val type: Int, var timeAlive: Float = 0f, var rotation: Float = 0f)
 data class Player(var x: Float, var y: Float, val size: Float = 60f)
 data class Bullet(val x: Float, var y: Float, val speed: Float = 20f)
 data class CurrencyNotification(val x: Float, val y: Float, val amount: Int, var alpha: Float = 1f, var timeAlive: Float = 0f)
+
+// Visual effects
+data class Particle(val x: Float, val y: Float, var vx: Float, var vy: Float, val color: Color, var alpha: Float = 1f, var timeAlive: Float = 0f, val maxLife: Float = 0.5f, val size: Float = 3f)
+data class TrailSegment(val x: Float, val y: Float, var alpha: Float = 1f, var timeAlive: Float = 0f)
+data class Nebula(val x: Float, val y: Float, val radius: Float, val color: Color, val speed: Float)
 
 // Shop system
 enum class ShopItemType {
@@ -399,6 +404,12 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
     var stars by remember { mutableStateOf<List<Star>>(emptyList()) }
     var currencyNotifications by remember { mutableStateOf<List<CurrencyNotification>>(emptyList()) }
 
+    // Visual effects
+    var particles by remember { mutableStateOf<List<Particle>>(emptyList()) }
+    var trailSegments by remember { mutableStateOf<List<TrailSegment>>(emptyList()) }
+    var nebulae by remember { mutableStateOf<List<Nebula>>(emptyList()) }
+    var damageFlashAlpha by remember { mutableFloatStateOf(0f) }
+
     // Game state
     var score by remember { mutableIntStateOf(0) }
     var earnedCurrency by remember { mutableIntStateOf(0) }
@@ -418,14 +429,39 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
     var activeRisk by remember { mutableStateOf<RiskState?>(null) }
     var permanentMultiplierBonus by remember { mutableDoubleStateOf(0.0) }
 
-    // Initialize stars
+    // Initialize stars with parallax layers
     LaunchedEffect(Unit) {
-        stars = List(50) {
+        stars = List(100) {
+            val layer = Random.nextInt(3) // 0 = far, 1 = mid, 2 = near
             Star(
                 x = Random.nextFloat() * screenWidth,
                 y = Random.nextFloat() * screenHeight,
-                size = Random.nextFloat() * 2f + 1f,
-                speed = Random.nextFloat() * 2f + 1f
+                size = when (layer) {
+                    0 -> Random.nextFloat() * 1.5f + 0.5f  // Small, far stars
+                    1 -> Random.nextFloat() * 2f + 1f      // Medium stars
+                    else -> Random.nextFloat() * 2.5f + 1.5f // Large, near stars
+                },
+                speed = when (layer) {
+                    0 -> Random.nextFloat() * 1f + 0.5f    // Slow
+                    1 -> Random.nextFloat() * 2f + 1.5f    // Medium
+                    else -> Random.nextFloat() * 3f + 2.5f // Fast
+                },
+                layer = layer
+            )
+        }
+
+        // Initialize nebulae (slow-moving background clouds)
+        nebulae = List(5) {
+            Nebula(
+                x = Random.nextFloat() * screenWidth,
+                y = Random.nextFloat() * screenHeight,
+                radius = Random.nextFloat() * 150f + 100f,
+                color = when (Random.nextInt(3)) {
+                    0 -> Color(0x33FF00FF) // Purple
+                    1 -> Color(0x3300FFFF) // Cyan
+                    else -> Color(0x330000FF) // Blue
+                },
+                speed = Random.nextFloat() * 0.3f + 0.1f
             )
         }
     }
@@ -463,14 +499,65 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
             val upgradeMultiplier = 1.0 + playerUpgrades.scoreBoostPercent + playerUpgrades.currencyBoostPercent
             currentMultiplier *= upgradeMultiplier
 
-            // Update stars
+            // Update nebulae (slow-moving background)
+            nebulae = nebulae.map { nebula ->
+                val newY = nebula.y + nebula.speed
+                if (newY > screenHeight + nebula.radius) {
+                    nebula.copy(y = -nebula.radius, x = Random.nextFloat() * screenWidth)
+                } else {
+                    nebula.copy(y = newY)
+                }
+            }
+
+            // Update stars with parallax layers
             stars = stars.map { star ->
-                val newY = star.y + star.speed * 3
+                val layerSpeed = when (star.layer) {
+                    0 -> 1f  // Far layer - slow
+                    1 -> 2f  // Mid layer
+                    else -> 3f // Near layer - fast
+                }
+                val newY = star.y + star.speed * layerSpeed
                 if (newY > screenHeight) {
                     star.copy(y = 0f, x = Random.nextFloat() * screenWidth)
                 } else {
                     star.copy(y = newY)
                 }
+            }
+
+            // Update particles (hit sparks, explosions)
+            // Limit to 200 particles for performance
+            particles = particles.mapNotNull { particle ->
+                val updated = particle.copy(
+                    x = particle.x + particle.vx,
+                    y = particle.y + particle.vy,
+                    vy = particle.vy + 0.2f, // Gravity
+                    alpha = (1f - particle.timeAlive / particle.maxLife).coerceIn(0f, 1f),
+                    timeAlive = particle.timeAlive + 0.016f
+                )
+                if (updated.timeAlive > updated.maxLife) null else updated
+            }.take(200)
+
+            // Update player trail segments
+            // Limit to 30 segments for performance
+            trailSegments = trailSegments.mapNotNull { segment ->
+                val updated = segment.copy(
+                    alpha = (1f - segment.timeAlive / 0.3f).coerceIn(0f, 1f),
+                    timeAlive = segment.timeAlive + 0.016f
+                )
+                if (updated.timeAlive > 0.3f) null else updated
+            }.takeLast(30)
+
+            // Add new trail segment for player (every few frames)
+            if (gameTime.toInt() % 2 == 0) {
+                trailSegments = trailSegments + TrailSegment(
+                    x = player.x,
+                    y = player.y + player.size / 3
+                )
+            }
+
+            // Fade out damage flash
+            if (damageFlashAlpha > 0f) {
+                damageFlashAlpha = (damageFlashAlpha - 0.05f).coerceAtLeast(0f)
             }
 
             // Auto-fire bullets (with fire rate upgrades)
@@ -501,7 +588,8 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                         else -> Random.nextFloat() * 3f + 2f
                     },
                     type = enemyType,
-                    timeAlive = 0f
+                    timeAlive = 0f,
+                    rotation = Random.nextFloat() * 360f
                 )
                 enemies = enemies + newEnemy
                 lastSpawn = currentTime
@@ -512,7 +600,10 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
             val challengeSpeedMultiplier = if (activeRisk?.type == ShopItemType.SURVIVAL_CHALLENGE && activeRisk?.isActive == true) 1.25f else 1.0f
 
             enemies = enemies.mapNotNull { enemy ->
-                val updatedEnemy = enemy.copy(timeAlive = enemy.timeAlive + 0.016f)
+                val updatedEnemy = enemy.copy(
+                    timeAlive = enemy.timeAlive + 0.016f,
+                    rotation = enemy.rotation + (2f * enemy.type) // Different rotation speeds per type
+                )
 
                 when (updatedEnemy.type) {
                     0 -> {
@@ -573,6 +664,42 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                         val basePoints = 10
                         val earnedPoints = (basePoints * currentMultiplier).toInt()
                         score += earnedPoints
+
+                        // Create hit spark particles
+                        val enemyColors = listOf(
+                            Color.Red, Color.Magenta, Color(0xFF00FF00),
+                            Color(0xFFFF4500), Color.Yellow
+                        )
+                        val sparkColor = enemyColors[enemy.type % enemyColors.size]
+
+                        repeat(8) { i ->
+                            val angle = (i * 45f) * Math.PI / 180f
+                            val speed = Random.nextFloat() * 3f + 2f
+                            particles = particles + Particle(
+                                x = enemy.x,
+                                y = enemy.y,
+                                vx = (cos(angle) * speed).toFloat(),
+                                vy = (sin(angle) * speed).toFloat(),
+                                color = sparkColor,
+                                maxLife = 0.4f,
+                                size = Random.nextFloat() * 2f + 2f
+                            )
+                        }
+
+                        // Create explosion particles
+                        repeat(12) {
+                            val angle = Random.nextFloat() * 2f * Math.PI
+                            val speed = Random.nextFloat() * 4f + 1f
+                            particles = particles + Particle(
+                                x = enemy.x,
+                                y = enemy.y,
+                                vx = (cos(angle) * speed).toFloat(),
+                                vy = (sin(angle) * speed).toFloat() - 2f, // Slight upward bias
+                                color = if (Random.nextBoolean()) Color.Yellow else Color(0xFFFF8800),
+                                maxLife = 0.6f,
+                                size = Random.nextFloat() * 3f + 3f
+                            )
+                        }
                     }
                 }
             }
@@ -587,6 +714,27 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                 val distance = kotlin.math.sqrt(dx * dx + dy * dy)
                 if (distance < (player.size + enemy.size) / 2) {
                     isAlive = false
+                    damageFlashAlpha = 1f
+
+                    // Create massive explosion particles
+                    repeat(30) {
+                        val angle = Random.nextFloat() * 2f * Math.PI
+                        val speed = Random.nextFloat() * 6f + 2f
+                        particles = particles + Particle(
+                            x = player.x,
+                            y = player.y,
+                            vx = (cos(angle) * speed).toFloat(),
+                            vy = (sin(angle) * speed).toFloat() - 3f,
+                            color = when (Random.nextInt(4)) {
+                                0 -> Color.Red
+                                1 -> Color.Yellow
+                                2 -> Color(0xFFFF8800)
+                                else -> Color.White
+                            },
+                            maxLife = 1.0f,
+                            size = Random.nextFloat() * 4f + 3f
+                        )
+                    }
                 }
             }
 
@@ -700,13 +848,60 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                     }
                 }
         ) {
-            // Draw stars
+            // Draw nebulae (background clouds)
+            nebulae.forEach { nebula ->
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            nebula.color,
+                            nebula.color.copy(alpha = 0.3f),
+                            Color.Transparent
+                        ),
+                        center = Offset(nebula.x, nebula.y),
+                        radius = nebula.radius
+                    ),
+                    radius = nebula.radius,
+                    center = Offset(nebula.x, nebula.y)
+                )
+            }
+
+            // Draw stars with parallax layers
             stars.forEach { star ->
+                val alpha = when (star.layer) {
+                    0 -> 0.4f  // Far stars - dim
+                    1 -> 0.6f  // Mid stars
+                    else -> 0.9f // Near stars - bright
+                }
                 drawCircle(
                     color = Color.White,
                     radius = star.size,
                     center = Offset(star.x, star.y),
-                    alpha = 0.8f
+                    alpha = alpha
+                )
+                // Add glow to larger stars
+                if (star.layer == 2) {
+                    drawCircle(
+                        color = Color.White,
+                        radius = star.size + 2f,
+                        center = Offset(star.x, star.y),
+                        alpha = alpha * 0.2f
+                    )
+                }
+            }
+
+            // Draw player trail segments
+            trailSegments.forEach { segment ->
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            Color.Cyan.copy(alpha = segment.alpha * 0.6f),
+                            Color.Cyan.copy(alpha = segment.alpha * 0.3f),
+                            Color.Transparent
+                        ),
+                        radius = 15f
+                    ),
+                    radius = 15f,
+                    center = Offset(segment.x, segment.y)
                 )
             }
 
@@ -720,16 +915,43 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                 drawEnemy(enemy)
             }
 
-            // Draw player
+            // Draw player with thruster effects
             if (isAlive) {
                 drawPlayer(player)
+                // Draw thrusters
+                drawThrusters(player, gameTime)
             } else {
                 drawExplosion(player)
+            }
+
+            // Draw particles (hit sparks, explosions)
+            particles.forEach { particle ->
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            particle.color.copy(alpha = particle.alpha),
+                            particle.color.copy(alpha = particle.alpha * 0.5f),
+                            Color.Transparent
+                        ),
+                        radius = particle.size
+                    ),
+                    radius = particle.size,
+                    center = Offset(particle.x, particle.y)
+                )
             }
 
             // Draw currency notifications
             currencyNotifications.forEach { notification ->
                 drawCurrencyNotification(notification)
+            }
+
+            // Draw damage flash overlay
+            if (damageFlashAlpha > 0f) {
+                drawRect(
+                    color = Color.Red,
+                    alpha = damageFlashAlpha * 0.3f,
+                    size = Size(size.width, size.height)
+                )
             }
         }
 
@@ -1035,7 +1257,7 @@ fun ShopOverlay(
     }
 }
 
-// Draw player spaceship
+// Draw player spaceship with enhanced visuals
 fun DrawScope.drawPlayer(player: Player) {
     val centerX = player.x
     val centerY = player.y
@@ -1049,23 +1271,41 @@ fun DrawScope.drawPlayer(player: Player) {
         close()
     }
 
-    // Glow effect
+    // Outer glow (larger)
     drawPath(
         path = path,
         color = Color.Cyan,
-        alpha = 0.3f,
-        style = Stroke(width = 8f)
+        alpha = 0.15f,
+        style = Stroke(width = 12f)
     )
 
-    // Main ship
+    // Inner glow
+    drawPath(
+        path = path,
+        color = Color.Cyan,
+        alpha = 0.4f,
+        style = Stroke(width = 6f)
+    )
+
+    // Main ship with gradient
     drawPath(
         path = path,
         brush = Brush.verticalGradient(
-            colors = listOf(Color.Cyan, Color(0xFF00D9FF))
+            colors = listOf(
+                Color.Cyan,
+                Color(0xFF00D9FF),
+                Color(0xFF0088FF)
+            )
         )
     )
 
-    // Cockpit
+    // Cockpit with glow
+    drawCircle(
+        color = Color(0xFF00FFFF),
+        radius = size / 5 + 3f,
+        center = Offset(centerX, centerY - size / 6),
+        alpha = 0.3f
+    )
     drawCircle(
         color = Color(0xFF00FFFF),
         radius = size / 6,
@@ -1073,29 +1313,100 @@ fun DrawScope.drawPlayer(player: Player) {
     )
 }
 
-// Draw bullet
-fun DrawScope.drawBullet(bullet: Bullet) {
-    // Draw glowing bullet
+// Draw thruster effects
+fun DrawScope.drawThrusters(player: Player, gameTime: Float) {
+    val centerX = player.x
+    val centerY = player.y
+    val size = player.size
+
+    // Pulsing thruster effect
+    val pulsePhase = (gameTime * 10f) % 1f
+    val thrusterAlpha = 0.6f + pulsePhase * 0.4f
+    val thrusterLength = size / 3 + pulsePhase * 10f
+
+    // Left thruster
     drawCircle(
         brush = Brush.radialGradient(
-            colors = listOf(Color.White, Color.Cyan, Color(0xFF00D9FF)),
-            center = Offset(bullet.x, bullet.y),
-            radius = 8f
+            colors = listOf(
+                Color(0xFFFFAA00).copy(alpha = thrusterAlpha),
+                Color(0xFFFF6600).copy(alpha = thrusterAlpha * 0.6f),
+                Color.Transparent
+            ),
+            radius = 12f
         ),
-        radius = 8f,
-        center = Offset(bullet.x, bullet.y)
+        radius = 12f,
+        center = Offset(centerX - size / 4, centerY + size / 2 + thrusterLength / 2)
     )
 
-    // Outer glow
+    // Right thruster
     drawCircle(
-        color = Color.Cyan,
+        brush = Brush.radialGradient(
+            colors = listOf(
+                Color(0xFFFFAA00).copy(alpha = thrusterAlpha),
+                Color(0xFFFF6600).copy(alpha = thrusterAlpha * 0.6f),
+                Color.Transparent
+            ),
+            radius = 12f
+        ),
         radius = 12f,
-        center = Offset(bullet.x, bullet.y),
-        alpha = 0.3f
+        center = Offset(centerX + size / 4, centerY + size / 2 + thrusterLength / 2)
     )
 }
 
-// Draw enemy
+// Draw bullet with enhanced glow
+fun DrawScope.drawBullet(bullet: Bullet) {
+    // Outer glow (large)
+    drawCircle(
+        brush = Brush.radialGradient(
+            colors = listOf(
+                Color.Cyan.copy(alpha = 0.1f),
+                Color.Transparent
+            ),
+            radius = 18f
+        ),
+        radius = 18f,
+        center = Offset(bullet.x, bullet.y)
+    )
+
+    // Middle glow
+    drawCircle(
+        brush = Brush.radialGradient(
+            colors = listOf(
+                Color.Cyan.copy(alpha = 0.4f),
+                Color.Cyan.copy(alpha = 0.1f),
+                Color.Transparent
+            ),
+            radius = 12f
+        ),
+        radius = 12f,
+        center = Offset(bullet.x, bullet.y)
+    )
+
+    // Core bullet
+    drawCircle(
+        brush = Brush.radialGradient(
+            colors = listOf(
+                Color.White,
+                Color.Cyan,
+                Color(0xFF00D9FF)
+            ),
+            center = Offset(bullet.x, bullet.y),
+            radius = 6f
+        ),
+        radius = 6f,
+        center = Offset(bullet.x, bullet.y)
+    )
+
+    // Bright center
+    drawCircle(
+        color = Color.White,
+        radius = 3f,
+        center = Offset(bullet.x, bullet.y),
+        alpha = 0.9f
+    )
+}
+
+// Draw enemy with enhanced visuals and rotation
 fun DrawScope.drawEnemy(enemy: Enemy) {
     val colors = listOf(
         listOf(Color.Red, Color(0xFFFF6B6B)),           // Type 0: Straight
@@ -1107,14 +1418,15 @@ fun DrawScope.drawEnemy(enemy: Enemy) {
 
     val colorPair = colors[enemy.type % colors.size]
 
-    // Draw enemy as a hexagon
+    // Draw enemy as a rotating hexagon
     val path = Path().apply {
         val radius = enemy.size / 2
         val centerX = enemy.x
         val centerY = enemy.y
+        val rotationRad = enemy.rotation * Math.PI / 180f
 
         for (i in 0..5) {
-            val angle = (i * 60f - 90f) * Math.PI / 180f
+            val angle = (i * 60f - 90f) * Math.PI / 180f + rotationRad
             val x = centerX + (radius * cos(angle)).toFloat()
             val y = centerY + (radius * sin(angle)).toFloat()
             if (i == 0) moveTo(x, y) else lineTo(x, y)
@@ -1122,7 +1434,15 @@ fun DrawScope.drawEnemy(enemy: Enemy) {
         close()
     }
 
-    // Glow
+    // Outer glow
+    drawPath(
+        path = path,
+        color = colorPair[0],
+        alpha = 0.3f,
+        style = Stroke(width = 8f)
+    )
+
+    // Inner glow
     drawPath(
         path = path,
         color = colorPair[0],
@@ -1130,33 +1450,75 @@ fun DrawScope.drawEnemy(enemy: Enemy) {
         style = Stroke(width = 4f)
     )
 
-    // Main body
+    // Main body with gradient
     drawPath(
         path = path,
         brush = Brush.radialGradient(
-            colors = colorPair,
+            colors = listOf(
+                colorPair[1],
+                colorPair[0],
+                colorPair[0].copy(alpha = 0.8f)
+            ),
             center = Offset(enemy.x, enemy.y)
         )
     )
+
+    // Core glow
+    drawCircle(
+        color = Color.White,
+        radius = enemy.size / 6,
+        center = Offset(enemy.x, enemy.y),
+        alpha = 0.6f
+    )
 }
 
-// Draw explosion effect
+// Draw enhanced explosion effect
 fun DrawScope.drawExplosion(player: Player) {
-    for (i in 0..8) {
-        val angle = (i * 40f) * Math.PI / 180f
-        val radius = player.size * 1.5f
+    // Central bright flash
+    drawCircle(
+        brush = Brush.radialGradient(
+            colors = listOf(
+                Color.White,
+                Color.Yellow,
+                Color(0xFFFF8800),
+                Color.Transparent
+            ),
+            radius = player.size * 1.2f
+        ),
+        radius = player.size * 1.2f,
+        center = Offset(player.x, player.y),
+        alpha = 0.9f
+    )
+
+    // Explosion bursts
+    for (i in 0..11) {
+        val angle = (i * 30f) * Math.PI / 180f
+        val radius = player.size * 1.8f
         val x = player.x + (radius * cos(angle)).toFloat()
         val y = player.y + (radius * sin(angle)).toFloat()
 
         drawCircle(
             brush = Brush.radialGradient(
-                colors = listOf(Color.Yellow, Color.Red, Color.Transparent)
+                colors = listOf(
+                    Color.Yellow.copy(alpha = 0.8f),
+                    Color(0xFFFF6600).copy(alpha = 0.6f),
+                    Color.Red.copy(alpha = 0.3f),
+                    Color.Transparent
+                )
             ),
-            radius = player.size / 3,
-            center = Offset(x, y),
-            alpha = 0.7f
+            radius = player.size / 2.5f,
+            center = Offset(x, y)
         )
     }
+
+    // Outer shockwave
+    drawCircle(
+        color = Color(0xFFFF8800),
+        radius = player.size * 2.2f,
+        center = Offset(player.x, player.y),
+        alpha = 0.2f,
+        style = Stroke(width = 4f)
+    )
 }
 
 /**

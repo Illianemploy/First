@@ -524,6 +524,81 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
         while (isActive && isAlive) {
             delay(16) // ~60 FPS
 
+            val currentTime = System.currentTimeMillis()
+            val survivedMilliseconds = currentTime - gameStartTime - pausedTime
+
+            // Handle space center updates separately (needed even when shop is open)
+            // Space Center (floating shop) spawning and update logic
+            if (!isShopOpen) {
+                // Only update space center position when shop is CLOSED
+                spaceCenter?.let { center ->
+                    val updatedCenter = center.copy(
+                        timeAlive = center.timeAlive + 0.016f,
+                        y = center.y + center.speed,  // Float downward
+                        x = center.x + sin(center.timeAlive * 0.5f) * 0.3f,  // Gentle horizontal sway
+                        rotation = sin(center.timeAlive * 0.3f) * 2f  // Subtle rotation (±2°)
+                    )
+
+                    // If space center is off-screen (below), remove it
+                    if (updatedCenter.y > screenHeight + 300f) {
+                        spaceCenter = null
+                    } else {
+                        spaceCenter = updatedCenter
+                    }
+                }
+
+                // Spawn logic (only when shop is closed and no space center exists)
+                if (spaceCenter == null) {
+                    val timeSinceExit = if (shopExitTime == 0L) {
+                        // First spawn - immediate
+                        999L
+                    } else {
+                        (currentTime - shopExitTime) / 1000
+                    }
+
+                    if (timeSinceExit >= shopRespawnSeconds) {
+                        // Spawn new space center at top of screen
+                        spaceCenter = SpaceCenter(
+                            x = screenWidth / 2,
+                            y = -200f,  // Start above screen
+                            rotation = 0f,
+                            timeAlive = 0f
+                        )
+                        shopIndex++
+                        purchasesThisWindow = 0
+
+                        // Decrement debt penalty counter
+                        if (playerUpgrades.debtPenaltyShopsRemaining > 0) {
+                            playerUpgrades = playerUpgrades.copy(
+                                debtPenaltyShopsRemaining = playerUpgrades.debtPenaltyShopsRemaining - 1
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Check player collision with space center (even when shop is open to detect exit)
+            spaceCenter?.let { center ->
+                val dx = player.x - center.x
+                val dy = player.y - center.y
+                val distance = kotlin.math.sqrt(dx * dx + dy * dy)
+                val interactionRadius = center.size * 0.325f  // 65% of size radius
+
+                val wasInsideShop = playerInsideShop
+                playerInsideShop = distance < interactionRadius
+
+                // Open shop when entering zone
+                if (playerInsideShop && !isShopOpen) {
+                    isShopOpen = true
+                }
+
+                // Auto-close shop when leaving zone (only if shop is open and player moved out)
+                if (!playerInsideShop && wasInsideShop && isShopOpen) {
+                    isShopOpen = false
+                    shopExitTime = currentTime
+                }
+            }
+
             // Skip all game updates when shop is open (pause the game)
             if (isShopOpen) {
                 pausedTime += 16
@@ -531,9 +606,6 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
             }
 
             gameTime += 0.016f
-
-            val currentTime = System.currentTimeMillis()
-            val survivedMilliseconds = currentTime - gameStartTime - pausedTime
 
             // Calculate time-based multiplier for rewards
             // Include permanent bonus from survival challenges
@@ -836,75 +908,6 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                 // Remove notifications after 2 seconds
                 if (updatedNotif.timeAlive > 2f) null
                 else updatedNotif
-            }
-
-            // Space Center (floating shop) spawning and update logic
-            val survivedSeconds = survivedMilliseconds / 1000
-
-            // Spawn first space center immediately, subsequent ones after 30s from exit
-            if (spaceCenter == null && !isShopOpen) {
-                val timeSinceExit = if (shopExitTime == 0L) {
-                    // First spawn - immediate
-                    999L
-                } else {
-                    (currentTime - shopExitTime) / 1000
-                }
-
-                if (timeSinceExit >= shopRespawnSeconds) {
-                    // Spawn new space center at top of screen
-                    spaceCenter = SpaceCenter(
-                        x = screenWidth / 2,
-                        y = -200f,  // Start above screen
-                        rotation = 0f,
-                        timeAlive = 0f
-                    )
-                    shopIndex++
-                    purchasesThisWindow = 0
-
-                    // Decrement debt penalty counter
-                    if (playerUpgrades.debtPenaltyShopsRemaining > 0) {
-                        playerUpgrades = playerUpgrades.copy(
-                            debtPenaltyShopsRemaining = playerUpgrades.debtPenaltyShopsRemaining - 1
-                        )
-                    }
-                }
-            }
-
-            // Update space center position and state
-            spaceCenter?.let { center ->
-                // Update time alive
-                val updatedCenter = center.copy(
-                    timeAlive = center.timeAlive + 0.016f,
-                    y = center.y + center.speed,  // Float downward
-                    x = center.x + sin(center.timeAlive * 0.5f) * 0.3f,  // Gentle horizontal sway
-                    rotation = sin(center.timeAlive * 0.3f) * 2f  // Subtle rotation (±2°)
-                )
-
-                // Check if player is in interaction zone (central 65% of sprite)
-                val dx = player.x - updatedCenter.x
-                val dy = player.y - updatedCenter.y
-                val distance = kotlin.math.sqrt(dx * dx + dy * dy)
-                val interactionRadius = updatedCenter.size * 0.325f  // 65% of size radius
-
-                playerInsideShop = distance < interactionRadius
-
-                // Open shop if player enters zone and shop isn't already open
-                if (playerInsideShop && !isShopOpen) {
-                    isShopOpen = true
-                }
-
-                // If space center is off-screen (below), remove it
-                if (updatedCenter.y > screenHeight + 300f) {
-                    spaceCenter = null
-                } else {
-                    spaceCenter = updatedCenter
-                }
-            }
-
-            // Close shop and set exit timer when player leaves interaction zone
-            if (!playerInsideShop && isShopOpen && spaceCenter != null) {
-                isShopOpen = false
-                shopExitTime = currentTime
             }
 
             // Update active risk challenges

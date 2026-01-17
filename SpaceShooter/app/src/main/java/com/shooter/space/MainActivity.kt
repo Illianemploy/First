@@ -63,6 +63,17 @@ data class Particle(val x: Float, val y: Float, var vx: Float, var vy: Float, va
 data class TrailSegment(val x: Float, val y: Float, var alpha: Float = 1f, var timeAlive: Float = 0f)
 data class Nebula(val x: Float, val y: Float, val radius: Float, val color: Color, val speed: Float)
 
+// Interactive objects
+data class SpaceCenter(
+    var x: Float,
+    var y: Float,
+    val size: Float = 400f,
+    var rotation: Float = 0f,
+    var timeAlive: Float = 0f,
+    val speed: Float = 1.5f,
+    var isActive: Boolean = true
+)
+
 // Shop system
 enum class ShopItemType {
     FIRE_RATE, BULLET_SPEED, SCORE_BOOST, CURRENCY_BOOST,
@@ -423,6 +434,11 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
         BitmapFactory.decodeResource(context.resources, R.drawable.asteroids).asImageBitmap()
     }
 
+    // Load space center sprite
+    val spaceCenterSprite = remember {
+        BitmapFactory.decodeResource(context.resources, R.drawable.space_center01).asImageBitmap()
+    }
+
     var player by remember { mutableStateOf(Player(screenWidth / 2, screenHeight - 150f)) }
     var enemies by remember { mutableStateOf<List<Enemy>>(emptyList()) }
     var bullets by remember { mutableStateOf<List<Bullet>>(emptyList()) }
@@ -435,6 +451,11 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
     var nebulae by remember { mutableStateOf<List<Nebula>>(emptyList()) }
     var damageFlashAlpha by remember { mutableFloatStateOf(0f) }
 
+    // Interactive objects
+    var spaceCenter by remember { mutableStateOf<SpaceCenter?>(null) }
+    var playerInsideShop by remember { mutableStateOf(false) }
+    var shopExitTime by remember { mutableLongStateOf(0L) }
+
     // Game state
     var score by remember { mutableIntStateOf(0) }
     var earnedCurrency by remember { mutableIntStateOf(0) }
@@ -443,10 +464,9 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
     var gameTime by remember { mutableFloatStateOf(0f) }
 
     // Shop state
-    val shopIntervalSeconds = 30
+    val shopRespawnSeconds = 30  // Time after exiting shop before next spawn
     var shopIndex by remember { mutableIntStateOf(0) }
     var isShopOpen by remember { mutableStateOf(false) }
-    var shopAvailableNotification by remember { mutableStateOf(false) }
     var purchasesThisWindow by remember { mutableIntStateOf(0) }
     val maxPurchasesPerWindow = 3
 
@@ -818,27 +838,73 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                 else updatedNotif
             }
 
-            // Shop timing logic - Opens every 30 seconds
+            // Space Center (floating shop) spawning and update logic
             val survivedSeconds = survivedMilliseconds / 1000
-            val currentShopIndex = (survivedSeconds / shopIntervalSeconds).toInt()
 
-            if (currentShopIndex > shopIndex && !isShopOpen) {
-                // New shop window available
-                shopIndex = currentShopIndex
-                shopAvailableNotification = true
-                purchasesThisWindow = 0
+            // Spawn first space center immediately, subsequent ones after 30s from exit
+            if (spaceCenter == null && !isShopOpen) {
+                val timeSinceExit = if (shopExitTime == 0L) {
+                    // First spawn - immediate
+                    999L
+                } else {
+                    (currentTime - shopExitTime) / 1000
+                }
 
-                // Decrement debt penalty counter
-                if (playerUpgrades.debtPenaltyShopsRemaining > 0) {
-                    playerUpgrades = playerUpgrades.copy(
-                        debtPenaltyShopsRemaining = playerUpgrades.debtPenaltyShopsRemaining - 1
+                if (timeSinceExit >= shopRespawnSeconds) {
+                    // Spawn new space center at top of screen
+                    spaceCenter = SpaceCenter(
+                        x = screenWidth / 2,
+                        y = -200f,  // Start above screen
+                        rotation = 0f,
+                        timeAlive = 0f
                     )
+                    shopIndex++
+                    purchasesThisWindow = 0
+
+                    // Decrement debt penalty counter
+                    if (playerUpgrades.debtPenaltyShopsRemaining > 0) {
+                        playerUpgrades = playerUpgrades.copy(
+                            debtPenaltyShopsRemaining = playerUpgrades.debtPenaltyShopsRemaining - 1
+                        )
+                    }
                 }
             }
 
-            // Auto-hide shop notification after 3 seconds
-            if (shopAvailableNotification && (survivedSeconds % shopIntervalSeconds) > 3) {
-                shopAvailableNotification = false
+            // Update space center position and state
+            spaceCenter?.let { center ->
+                // Update time alive
+                val updatedCenter = center.copy(
+                    timeAlive = center.timeAlive + 0.016f,
+                    y = center.y + center.speed,  // Float downward
+                    x = center.x + sin(center.timeAlive * 0.5f) * 0.3f,  // Gentle horizontal sway
+                    rotation = sin(center.timeAlive * 0.3f) * 2f  // Subtle rotation (±2°)
+                )
+
+                // Check if player is in interaction zone (central 65% of sprite)
+                val dx = player.x - updatedCenter.x
+                val dy = player.y - updatedCenter.y
+                val distance = kotlin.math.sqrt(dx * dx + dy * dy)
+                val interactionRadius = updatedCenter.size * 0.325f  // 65% of size radius
+
+                playerInsideShop = distance < interactionRadius
+
+                // Open shop if player enters zone and shop isn't already open
+                if (playerInsideShop && !isShopOpen) {
+                    isShopOpen = true
+                }
+
+                // If space center is off-screen (below), remove it
+                if (updatedCenter.y > screenHeight + 300f) {
+                    spaceCenter = null
+                } else {
+                    spaceCenter = updatedCenter
+                }
+            }
+
+            // Close shop and set exit timer when player leaves interaction zone
+            if (!playerInsideShop && isShopOpen && spaceCenter != null) {
+                isShopOpen = false
+                shopExitTime = currentTime
             }
 
             // Update active risk challenges
@@ -927,6 +993,11 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                         alpha = alpha * 0.2f
                     )
                 }
+            }
+
+            // Draw space center (floating shop)
+            spaceCenter?.let { center ->
+                drawSpaceCenter(center, spaceCenterSprite)
             }
 
             // Draw player trail segments
@@ -1036,8 +1107,8 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
             )
         }
 
-        // Shop available notification
-        if (shopAvailableNotification && !isShopOpen) {
+        // Interaction prompt when near space center
+        if (playerInsideShop && !isShopOpen && spaceCenter != null) {
             Card(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -1047,31 +1118,11 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                 )
             ) {
                 Text(
-                    text = "🛒 SHOP AVAILABLE",
+                    text = "🛒 ENTERING SHOP...",
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.Black,
                     modifier = Modifier.padding(16.dp)
-                )
-            }
-        }
-
-        // Shop access button (visible when shop is available)
-        if (!isShopOpen && shopIndex > 0 && !isAlive.not()) {
-            Button(
-                onClick = { isShopOpen = true },
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(16.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF00FF00)
-                )
-            ) {
-                Text(
-                    text = "SHOP",
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.Black
                 )
             }
         }
@@ -1598,4 +1649,57 @@ fun DrawScope.drawCurrencyNotification(notification: CurrencyNotification) {
             alpha = notification.alpha
         )
     }
+}
+
+// Draw floating space center (shop)
+fun DrawScope.drawSpaceCenter(center: SpaceCenter, spriteSheet: ImageBitmap) {
+    val centerX = center.x
+    val centerY = center.y
+    val size = center.size
+
+    // Draw outer glow for shop indicator
+    drawCircle(
+        brush = Brush.radialGradient(
+            colors = listOf(
+                Color(0xFF00FF00).copy(alpha = 0.15f),
+                Color(0xFF00FF00).copy(alpha = 0.05f),
+                Color.Transparent
+            ),
+            radius = size / 2 + 40f
+        ),
+        radius = size / 2 + 40f,
+        center = Offset(centerX, centerY),
+        alpha = 0.8f + sin(center.timeAlive * 2f) * 0.2f  // Pulsing glow
+    )
+
+    // Draw inner glow
+    drawCircle(
+        color = Color(0xFF00FF00),
+        radius = size / 2 + 20f,
+        center = Offset(centerX, centerY),
+        alpha = 0.15f
+    )
+
+    // Calculate destination position (centered)
+    val destOffset = IntOffset((centerX - size / 2).toInt(), (centerY - size / 2).toInt())
+    val destSize = IntSize(size.toInt(), size.toInt())
+
+    // Draw the space center sprite
+    // Note: Using rotation would require drawImage with transformation
+    // For now, keeping it simple with just the sprite
+    drawImage(
+        image = spriteSheet,
+        dstOffset = destOffset,
+        dstSize = destSize
+    )
+
+    // Draw interaction zone indicator (subtle circle)
+    val interactionRadius = size * 0.325f  // 65% of size
+    drawCircle(
+        color = Color(0xFF00FF00),
+        radius = interactionRadius,
+        center = Offset(centerX, centerY),
+        alpha = 0.1f + sin(center.timeAlive * 3f) * 0.05f,  // Subtle pulse
+        style = Stroke(width = 2f)
+    )
 }

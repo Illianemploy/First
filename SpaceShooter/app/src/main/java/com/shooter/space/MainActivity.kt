@@ -126,12 +126,12 @@ class ScrollingBackgroundManager(
     private val screenHeight: Float
 ) {
     private val backgroundList: List<String> = listOf(
-        "hello_purple_background01",
-        "hello_purple_background02",
-        "hello_purple_background03",
-        "misty_red_background01",
-        "misty_red_background02",
-        "misty_red_background03"
+        "background_0001",
+        "background_0002",
+        "background_0003",
+        "background_0004",
+        "background_0005",
+        "background_0006"
     )
 
     private val activeBackgrounds: MutableList<Background> = mutableListOf()

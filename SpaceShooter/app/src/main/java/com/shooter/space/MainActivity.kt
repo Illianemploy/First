@@ -11,6 +11,7 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -1405,10 +1406,10 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                         )
                     }
                 }
-                .pointerInput(Unit) {
+                .pointerInput(BuildConfig.DEBUG) {
                     // Debug overlay toggle: 5 quick taps in top-right corner (only in debug builds)
                     if (BuildConfig.DEBUG) {
-                        androidx.compose.foundation.gestures.detectTapGestures { offset ->
+                        detectTapGestures { offset ->
                             val debugZoneSize = 150f
                             val isInDebugZone = offset.x > (screenWidth - debugZoneSize) && offset.y < debugZoneSize
 

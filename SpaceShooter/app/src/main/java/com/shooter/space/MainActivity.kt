@@ -175,6 +175,254 @@ data class SpaceCenter(
     var isActive: Boolean = true
 )
 
+// ============================================================================
+// POWER-UP SYSTEM - Data Models (Pure Kotlin)
+// ============================================================================
+
+/**
+ * Power-up types corresponding to Bonuses-0001.png columns (5x5 grid).
+ * Column mapping (left to right):
+ *   col 0 = HEALTH
+ *   col 1 = SHIELD
+ *   col 2 = FIREPOWER
+ *   col 3 = MULTISHOT
+ *   col 4 = DOUBLE_REWARD
+ */
+enum class PowerUpType {
+    HEALTH,        // Instant HP restore
+    SHIELD,        // Timed damage reduction/absorption
+    FIREPOWER,     // Timed increased damage/fire rate
+    MULTISHOT,     // Timed multiple simultaneous bullets per shot
+    DOUBLE_REWARD  // Timed 2x score and currency
+}
+
+/**
+ * World power-up entity (collectible in game world).
+ * @param tier 0-4, affects sprite row and optionally strength/duration
+ */
+data class WorldPowerUp(
+    val id: Long,
+    val type: PowerUpType,
+    var x: Float,
+    var y: Float,
+    var tier: Int,            // 0-4: sprite row + optional strength scaling
+    var alive: Boolean = true
+)
+
+/**
+ * Active power-up effect on player.
+ * @param remainingMs null for instant effects (HEALTH), countdown for timed effects
+ */
+data class ActiveEffect(
+    val type: PowerUpType,
+    var tier: Int,            // 0-4: visual + strength scaling
+    var remainingMs: Long?    // null = instant (HEALTH), else countdown timer
+)
+
+/**
+ * PowerUpSystem - Pure Kotlin gameplay logic
+ * Manages world power-ups and active effects with pause-safe timers.
+ *
+ * Duration formulas (ms):
+ *   SHIELD: 10000 + tier*2000
+ *   FIREPOWER: 10000 + tier*2000
+ *   MULTISHOT: 8000 + tier*2000
+ *   DOUBLE_REWARD: 12000 + tier*2000
+ *
+ * Multishot bonus (simultaneous bullets per shot):
+ *   tier 0 => +1 (2 total)
+ *   tier 1 => +2 (3 total)
+ *   tier 2 => +3 (4 total)
+ *   tier 3 => +4 (5 total)
+ *   tier 4 => +5 (6 total)
+ */
+class PowerUpSystem {
+    private var nextId: Long = 0L
+    val worldPowerUps = mutableListOf<WorldPowerUp>()
+    val activeEffects = mutableMapOf<PowerUpType, ActiveEffect>()
+
+    /**
+     * Spawn a new power-up in the world.
+     */
+    fun spawnPowerUp(type: PowerUpType, tier: Int, x: Float, y: Float) {
+        val clampedTier = tier.coerceIn(0, 4)
+        worldPowerUps.add(
+            WorldPowerUp(
+                id = nextId++,
+                type = type,
+                x = x,
+                y = y,
+                tier = clampedTier,
+                alive = true
+            )
+        )
+    }
+
+    /**
+     * Update world power-ups and active effect timers.
+     * @param dtMs delta time in milliseconds (0 when paused/shop open)
+     */
+    fun update(dtMs: Long) {
+        if (dtMs <= 0) return  // Pause-safe: no updates when not running
+
+        // Update timed effect countdowns
+        activeEffects.values.removeIf { effect ->
+            effect.remainingMs?.let { remaining ->
+                effect.remainingMs = remaining - dtMs
+                (remaining - dtMs) <= 0  // Remove if expired
+            } ?: false  // Keep instant effects (should not be in map)
+        }
+    }
+
+    /**
+     * Check if player collides with any power-up and apply effect.
+     * @param playerX player center X
+     * @param playerY player center Y
+     * @param playerRadius player collision radius
+     * @param currentHealth for HEALTH instant effect
+     * @param maxHealth for HEALTH clamping
+     * @return new health value (only changed for HEALTH pickups)
+     */
+    fun handlePickupIfColliding(
+        playerX: Float,
+        playerY: Float,
+        playerRadius: Float,
+        currentHealth: Int,
+        maxHealth: Int
+    ): Int {
+        var newHealth = currentHealth
+        val pickupRadius = 30f  // Power-up collision radius
+
+        worldPowerUps.forEach { powerUp ->
+            if (!powerUp.alive) return@forEach
+
+            val dx = playerX - powerUp.x
+            val dy = playerY - powerUp.y
+            val distanceSquared = dx * dx + dy * dy
+            val collisionRadiusSquared = (playerRadius + pickupRadius) * (playerRadius + pickupRadius)
+
+            if (distanceSquared < collisionRadiusSquared) {
+                // Collision detected - apply pickup
+                powerUp.alive = false
+                newHealth = applyPickup(powerUp.type, powerUp.tier, currentHealth, maxHealth)
+            }
+        }
+
+        // Clean up dead power-ups
+        worldPowerUps.removeIf { !it.alive }
+
+        return newHealth
+    }
+
+    /**
+     * Apply power-up effect using stacking rules.
+     * Stacking policy:
+     *   - remainingMs = max(current, new)  (refresh to longer)
+     *   - tier = max(current, new)         (keep strongest visual)
+     *
+     * @return new health value (only changed for HEALTH)
+     */
+    private fun applyPickup(
+        type: PowerUpType,
+        tier: Int,
+        currentHealth: Int,
+        maxHealth: Int
+    ): Int {
+        return when (type) {
+            PowerUpType.HEALTH -> {
+                // Instant effect: restore health
+                val healthRestore = 1 + tier  // tier 0=>1 HP, tier 4=>5 HP
+                (currentHealth + healthRestore).coerceAtMost(maxHealth)
+            }
+
+            PowerUpType.SHIELD -> {
+                val duration = 10000L + tier * 2000L
+                stackTimedEffect(type, tier, duration)
+                currentHealth
+            }
+
+            PowerUpType.FIREPOWER -> {
+                val duration = 10000L + tier * 2000L
+                stackTimedEffect(type, tier, duration)
+                currentHealth
+            }
+
+            PowerUpType.MULTISHOT -> {
+                val duration = 8000L + tier * 2000L
+                stackTimedEffect(type, tier, duration)
+                currentHealth
+            }
+
+            PowerUpType.DOUBLE_REWARD -> {
+                val duration = 12000L + tier * 2000L
+                stackTimedEffect(type, tier, duration)
+                currentHealth
+            }
+        }
+    }
+
+    /**
+     * Stack or refresh a timed effect.
+     */
+    private fun stackTimedEffect(type: PowerUpType, tier: Int, duration: Long) {
+        val existing = activeEffects[type]
+        if (existing != null) {
+            // Refresh: take max of timers and tiers
+            existing.remainingMs = maxOf(existing.remainingMs ?: 0L, duration)
+            existing.tier = maxOf(existing.tier, tier)
+        } else {
+            // New effect
+            activeEffects[type] = ActiveEffect(
+                type = type,
+                tier = tier,
+                remainingMs = duration
+            )
+        }
+    }
+
+    // Query helpers
+    fun hasEffect(type: PowerUpType): Boolean = activeEffects.containsKey(type)
+    fun effectTier(type: PowerUpType): Int = activeEffects[type]?.tier ?: 0
+    fun remainingMs(type: PowerUpType): Long? = activeEffects[type]?.remainingMs
+
+    /**
+     * Get multishot bullet count bonus.
+     * tier 0=>+1, tier 1=>+2, tier 2=>+3, tier 3=>+4, tier 4=>+5
+     */
+    fun getMultishotBulletCount(): Int {
+        if (!hasEffect(PowerUpType.MULTISHOT)) return 1
+        val tier = effectTier(PowerUpType.MULTISHOT)
+        return 1 + (tier + 1)  // tier 0=>2, tier 1=>3, ..., tier 4=>6
+    }
+
+    /**
+     * Get firepower damage multiplier.
+     * tier 0=>1.2x, tier 4=>2.0x (linear scaling)
+     */
+    fun getFirepowerMultiplier(): Float {
+        if (!hasEffect(PowerUpType.FIREPOWER)) return 1.0f
+        val tier = effectTier(PowerUpType.FIREPOWER)
+        return 1.2f + (tier * 0.2f)  // tier 0=>1.2x, tier 1=>1.4x, ..., tier 4=>2.0x
+    }
+
+    /**
+     * Get shield damage reduction multiplier.
+     * tier 0=>0.5x (50% reduction), tier 4=>0.1x (90% reduction)
+     */
+    fun getShieldDamageMultiplier(): Float {
+        if (!hasEffect(PowerUpType.SHIELD)) return 1.0f
+        val tier = effectTier(PowerUpType.SHIELD)
+        return 0.5f - (tier * 0.1f)  // tier 0=>0.5x, tier 1=>0.4x, ..., tier 4=>0.1x
+    }
+
+    /**
+     * Get reward multiplier (score and currency).
+     */
+    fun getRewardMultiplier(): Float {
+        return if (hasEffect(PowerUpType.DOUBLE_REWARD)) 2.0f else 1.0f
+    }
+}
+
 // Debug overlay metrics (only available in debug builds)
 data class DebugMetrics(
     var fps: Int = 0,
@@ -993,6 +1241,20 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
         }
     }
 
+    // Load power-up sprite sheet (Bonuses-0001.png - 5x5 grid)
+    val powerUpSprite = remember {
+        val resourceId = context.resources.getIdentifier(
+            "bonuses_0001",  // Android resource names must be lowercase with underscores
+            "drawable",
+            context.packageName
+        )
+        if (resourceId != 0) {
+            BitmapFactory.decodeResource(context.resources, resourceId).asImageBitmap()
+        } else {
+            null  // Graceful fallback if sprite not found
+        }
+    }
+
     // Load space center sprite
     val spaceCenterSprite = remember {
         BitmapFactory.decodeResource(context.resources, R.drawable.space_center02).asImageBitmap()
@@ -1036,9 +1298,14 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
     // Core game systems
     val difficultyScaler = remember { DifficultyScaler() }
     var weaponStats by remember { mutableStateOf(WeaponStats()) }
+    val powerUpSystem = remember { PowerUpSystem() }
 
     // Track enemy health for persistence across hits
     val enemyHealthMap = remember { mutableMapOf<Enemy, Int>() }
+
+    // Player health system (needed for power-ups)
+    var playerHealth by remember { mutableIntStateOf(3) }
+    val maxPlayerHealth = 3
 
     // Debug overlay state (only enabled in debug builds)
     var debugOverlayEnabled by remember { mutableStateOf(false) }
@@ -1078,6 +1345,7 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
         var lastBulletFire = 0L
         var lastScoreUpdate = gameStartTime
         var lastCurrencyAward = gameStartTime
+        var lastPowerUpSpawn = gameStartTime  // Track power-up spawning
         var pausedTime = 0L // Track time spent in shop
 
         // Performance optimization: tick rate separation
@@ -1210,10 +1478,14 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
             // Skip all game updates when shop is open (pause the game)
             if (isShopOpen) {
                 pausedTime += 16
+                powerUpSystem.update(0)  // Pause-safe: 0ms delta
                 continue
             }
 
             gameTime += 0.016f
+
+            // Update power-up system (only when running)
+            powerUpSystem.update(16L)  // 16ms delta at 60 FPS
 
             // Update parallax background (only the scrolling starfield layer moves)
             backgroundManager.update(0.016f)
@@ -1333,6 +1605,25 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                 enemies = enemies + newEnemy
                 lastSpawn = currentTime
             }
+
+            // Spawn power-ups periodically (TEST: every 10 seconds)
+            if (currentTime - lastPowerUpSpawn > 10000) {
+                val randomType = PowerUpType.values()[Random.nextInt(PowerUpType.values().size)]
+                val randomTier = Random.nextInt(5)  // 0-4
+                val spawnX = Random.nextFloat() * screenWidth
+                val spawnY = screenHeight * 0.3f  // Spawn in upper third of screen
+                powerUpSystem.spawnPowerUp(randomType, randomTier, spawnX, spawnY)
+                lastPowerUpSpawn = currentTime
+            }
+
+            // Check power-up pickups
+            playerHealth = powerUpSystem.handlePickupIfColliding(
+                playerX = player.x,
+                playerY = player.y,
+                playerRadius = player.size / 2,
+                currentHealth = playerHealth,
+                maxHealth = maxPlayerHealth
+            )
 
             // Update enemies using behavior system and difficulty scaling
             // Combine challenge modifier with difficulty scaling (uses cached value)
@@ -1571,6 +1862,13 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
             // Draw bullets
             bullets.forEach { bullet ->
                 drawBullet(bullet)
+            }
+
+            // Draw power-ups
+            powerUpSystem.worldPowerUps.forEach { powerUp ->
+                if (powerUp.alive) {
+                    drawPowerUp(powerUp, powerUpSprite)
+                }
             }
 
             // Draw enemies (using procedural shapes + sprite system)
@@ -2009,6 +2307,61 @@ fun DrawScope.drawBullet(bullet: Bullet) {
         color = Color.Cyan,
         radius = 4f,
         center = Offset(bullet.x, bullet.y)
+    )
+}
+
+/**
+ * Draw power-up using Bonuses-0001.png sprite atlas (5x5 grid).
+ * Column mapping: HEALTH=0, SHIELD=1, FIREPOWER=2, MULTISHOT=3, DOUBLE_REWARD=4
+ * Row mapping: tier 0-4 (top to bottom)
+ */
+fun DrawScope.drawPowerUp(powerUp: WorldPowerUp, spriteAtlas: ImageBitmap?) {
+    if (spriteAtlas == null) {
+        // Fallback: draw colored circle if sprite not loaded
+        val fallbackColor = when (powerUp.type) {
+            PowerUpType.HEALTH -> Color(0xFF00FF00)      // Green
+            PowerUpType.SHIELD -> Color(0xFF0088FF)      // Blue
+            PowerUpType.FIREPOWER -> Color(0xFFFF4400)   // Orange
+            PowerUpType.MULTISHOT -> Color(0xFFFFFF00)   // Yellow
+            PowerUpType.DOUBLE_REWARD -> Color(0xFFFFD700) // Gold
+        }
+        drawCircle(
+            color = fallbackColor,
+            radius = 30f,
+            center = Offset(powerUp.x, powerUp.y)
+        )
+        return
+    }
+
+    // Calculate sprite atlas dimensions
+    val cellW = spriteAtlas.width / 5
+    val cellH = spriteAtlas.height / 5
+
+    // Map type to column (ordinal matches column order)
+    val col = powerUp.type.ordinal
+
+    // Map tier to row (clamped 0-4)
+    val row = powerUp.tier.coerceIn(0, 4)
+
+    // Source rectangle in atlas
+    val srcOffset = IntOffset(col * cellW, row * cellH)
+    val srcSize = IntSize(cellW, cellH)
+
+    // Destination position and size
+    val renderSize = 60f  // Power-up visual size
+    val destOffset = IntOffset(
+        (powerUp.x - renderSize / 2).toInt(),
+        (powerUp.y - renderSize / 2).toInt()
+    )
+    val destSize = IntSize(renderSize.toInt(), renderSize.toInt())
+
+    // Draw sprite from atlas
+    drawImage(
+        image = spriteAtlas,
+        srcOffset = srcOffset,
+        srcSize = srcSize,
+        dstOffset = destOffset,
+        dstSize = destSize
     )
 }
 

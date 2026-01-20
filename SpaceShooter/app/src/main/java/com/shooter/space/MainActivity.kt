@@ -45,21 +45,124 @@ import kotlin.random.Random
 
 // Game entities
 data class Star(val x: Float, val y: Float, val size: Float, val speed: Float, val layer: Int = 0)
+
+// Enemy size tiers for visual and hitbox scaling
+enum class SizeTier {
+    SMALL,   // 40-60px
+    MEDIUM,  // 70-90px
+    LARGE,   // 100-130px
+    ELITE    // 130-160px
+}
+
+// Enemy visual styles (procedural shapes + sprites)
+enum class EnemyVisualStyle {
+    SHAPE_TRIANGLE,
+    SHAPE_SQUARE,
+    SHAPE_RECT,
+    SHAPE_CIRCLE,
+    SPRITE_EVIL_SHIP_001
+}
+
 data class Enemy(
     var x: Float,
     var y: Float,
-    val size: Float,
+    var size: Float,  // Dynamic size based on sizeTier
     val speed: Float,
     val type: Int,
     var timeAlive: Float = 0f,
     var rotation: Float = 0f,
-    val spriteVariant: Int = 0,  // 0 = left/orange, 1 = right/blue
-    var health: Int = 1,                      // Current health (hits remaining)
-    val maxHealth: Int = 1,                   // Maximum health
-    var behaviorController: EnemyBehaviorController? = null  // AI behavior controller
+    val spriteVariant: Int = 0,  // Used for color variation
+    var health: Int = 1,
+    val maxHealth: Int = 1,
+    var behaviorController: EnemyBehaviorController? = null,
+    val sizeTier: SizeTier = SizeTier.MEDIUM,
+    val visualStyle: EnemyVisualStyle = EnemyVisualStyle.SHAPE_CIRCLE
 )
+
 data class Player(var x: Float, var y: Float, val size: Float = 60f, var velocityX: Float = 0f, var velocityY: Float = 0f)
 data class Bullet(val x: Float, var y: Float, val speed: Float = 20f)
+
+// ============================================================================
+// ENEMY VISUAL SYSTEM - Configuration & Tuning
+// ============================================================================
+
+/**
+ * TUNING CONSTANTS - Adjust these to balance visual variety and gameplay
+ *
+ * Size ranges (min-max px):
+ *   SMALL: 40-60px    (60% spawn rate)
+ *   MEDIUM: 70-90px   (25% spawn rate)
+ *   LARGE: 100-130px  (12% spawn rate)
+ *   ELITE: 130-160px  (3% spawn rate)
+ *
+ * Visual style distribution:
+ *   Shapes: 80% (triangle, square, rect, circle - equal distribution)
+ *   Sprites: 20% (currently only evil_enemy_spaceship_001.png)
+ *
+ * To add new sprites:
+ *   1. Add PNG to SpaceShooter/app/src/main/res/drawable/
+ *   2. Add new enum: EnemyVisualStyle.SPRITE_YOUR_NAME
+ *   3. Update EnemyRenderer.loadSprites() to cache bitmap
+ *   4. Update drawEnemy() switch statement to render it
+ *   5. Update randomVisualStyle() to include it in rotation
+ */
+
+/**
+ * Get render size for a given size tier.
+ * Returns a random size within the tier's range for variety.
+ */
+fun getSizeForTier(tier: SizeTier): Float {
+    return when (tier) {
+        SizeTier.SMALL -> Random.nextFloat() * 20f + 40f   // 40-60px
+        SizeTier.MEDIUM -> Random.nextFloat() * 20f + 70f  // 70-90px
+        SizeTier.LARGE -> Random.nextFloat() * 30f + 100f  // 100-130px
+        SizeTier.ELITE -> Random.nextFloat() * 30f + 130f  // 130-160px
+    }
+}
+
+/**
+ * Randomly select a size tier based on spawn distribution.
+ * Adjust percentages below to change enemy size variety.
+ */
+fun randomSizeTier(): SizeTier {
+    val roll = Random.nextFloat() * 100f
+    return when {
+        roll < 60f -> SizeTier.SMALL   // 60% spawn rate
+        roll < 85f -> SizeTier.MEDIUM  // 25% spawn rate
+        roll < 97f -> SizeTier.LARGE   // 12% spawn rate
+        else -> SizeTier.ELITE         // 3% spawn rate
+    }
+}
+
+/**
+ * Randomly select a visual style for enemy rendering.
+ * Adjust percentages to change sprite vs shape distribution.
+ */
+fun randomVisualStyle(): EnemyVisualStyle {
+    val roll = Random.nextFloat() * 100f
+    return if (roll < 20f) {
+        // 20% chance of sprite enemy
+        EnemyVisualStyle.SPRITE_EVIL_SHIP_001
+    } else {
+        // 80% chance of procedural shape (equal distribution)
+        when (Random.nextInt(4)) {
+            0 -> EnemyVisualStyle.SHAPE_TRIANGLE
+            1 -> EnemyVisualStyle.SHAPE_SQUARE
+            2 -> EnemyVisualStyle.SHAPE_RECT
+            else -> EnemyVisualStyle.SHAPE_CIRCLE
+        }
+    }
+}
+
+/**
+ * Get health bonus for elite enemies (optional scaling).
+ */
+fun getHealthBonusForTier(tier: SizeTier, baseHealth: Int): Int {
+    return when (tier) {
+        SizeTier.ELITE -> baseHealth + 1  // Elite gets +1 health
+        else -> baseHealth
+    }
+}
 
 // Interactive objects
 data class SpaceCenter(
@@ -883,9 +986,11 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
         BitmapFactory.decodeResource(context.resources, R.drawable.player_ship).asImageBitmap()
     }
 
-    // Load asteroid sprite sheet (2 columns × 3 rows)
-    val asteroidSprite = remember {
-        BitmapFactory.decodeResource(context.resources, R.drawable.asteroids).asImageBitmap()
+    // Initialize enemy renderer (loads all enemy sprites)
+    val enemyRenderer = remember {
+        EnemyRenderer(context).apply {
+            loadSprites()
+        }
     }
 
     // Load space center sprite
@@ -1200,22 +1305,30 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
             if (currentTime - lastSpawn > cachedSpawnInterval) {
                 val enemyType = Random.nextInt(5) // 5 different enemy types
                 val baseSpeed = when (enemyType) {
-                    3 -> Random.nextFloat() * 2f + 5f // Fast enemy (small asteroid)
+                    3 -> Random.nextFloat() * 2f + 5f // Fast enemy
                     else -> Random.nextFloat() * 3f + 2f
                 }
 
+                // Determine size tier and visual style
+                val sizeTier = randomSizeTier()
+                val visualStyle = randomVisualStyle()
+                val enemySize = getSizeForTier(sizeTier)
+                val enemyHealth = getHealthBonusForTier(sizeTier, cachedEnemyHealth)
+
                 val newEnemy = Enemy(
-                    x = Random.nextFloat() * (screenWidth - 80f) + 40f,
-                    y = -50f,
-                    size = 50f,
+                    x = Random.nextFloat() * (screenWidth - enemySize) + enemySize / 2,
+                    y = -enemySize,
+                    size = enemySize,
                     speed = baseSpeed,
                     type = enemyType,
                     timeAlive = 0f,
                     rotation = Random.nextFloat() * 360f,
-                    spriteVariant = Random.nextInt(2), // 0 = orange, 1 = blue
-                    health = cachedEnemyHealth,
-                    maxHealth = cachedEnemyHealth,
-                    behaviorController = EnemyBehaviorController()
+                    spriteVariant = Random.nextInt(3), // 0 = red, 1 = blue, 2 = green
+                    health = enemyHealth,
+                    maxHealth = enemyHealth,
+                    behaviorController = EnemyBehaviorController(),
+                    sizeTier = sizeTier,
+                    visualStyle = visualStyle
                 )
                 enemies = enemies + newEnemy
                 lastSpawn = currentTime
@@ -1334,13 +1447,15 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
             }
 
             // Check player-enemy collisions (use squared distance)
-            val collisionRadius = (player.size + 50f) / 2  // enemy.size is always 50f
-            val collisionRadiusSquared = collisionRadius * collisionRadius
-
+            // Each enemy has dynamic size based on size tier
             enemies.forEach { enemy ->
                 val dx = player.x - enemy.x
                 val dy = player.y - enemy.y
                 val distanceSquared = dx * dx + dy * dy
+
+                // Collision radius = sum of player and enemy radii
+                val collisionRadius = (player.size + enemy.size) / 2
+                val collisionRadiusSquared = collisionRadius * collisionRadius
 
                 // Use squared distance to avoid sqrt
                 if (distanceSquared < collisionRadiusSquared) {
@@ -1458,9 +1573,9 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                 drawBullet(bullet)
             }
 
-            // Draw enemies
+            // Draw enemies (using procedural shapes + sprite system)
             enemies.forEach { enemy ->
-                drawEnemy(enemy, asteroidSprite)
+                drawEnemy(enemy, enemyRenderer)
             }
 
             // Draw player
@@ -1897,49 +2012,159 @@ fun DrawScope.drawBullet(bullet: Bullet) {
     )
 }
 
-// Draw enemy using asteroid sprite sheet
-fun DrawScope.drawEnemy(enemy: Enemy, asteroidSprite: ImageBitmap) {
+/**
+ * Enemy Renderer - handles all enemy visual rendering
+ * Supports both procedural shapes and sprite-based rendering
+ *
+ * To add new sprites:
+ * 1. Add new sprite to res/drawable/
+ * 2. Add new EnemyVisualStyle enum value
+ * 3. Update loadSprites() to cache the bitmap
+ * 4. Update drawEnemy() switch statement
+ */
+class EnemyRenderer(private val context: Context) {
+    // Cached sprites (loaded once, reused for performance)
+    internal var evilShipSprite: ImageBitmap? = null
+
+    /**
+     * Load and cache all enemy sprites.
+     * Call this once during initialization.
+     */
+    fun loadSprites() {
+        evilShipSprite = loadSprite("evil_enemy_spaceship_001")
+    }
+
+    private fun loadSprite(resourceName: String): ImageBitmap? {
+        return try {
+            val resourceId = context.resources.getIdentifier(
+                resourceName,
+                "drawable",
+                context.packageName
+            )
+            if (resourceId != 0) {
+                BitmapFactory.decodeResource(context.resources, resourceId).asImageBitmap()
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+}
+
+/**
+ * Draw enemy using procedural shapes or sprite based on visual style.
+ * This is the main entry point for enemy rendering.
+ */
+fun DrawScope.drawEnemy(enemy: Enemy, renderer: EnemyRenderer?) {
     val centerX = enemy.x
     val centerY = enemy.y
     val size = enemy.size
+    val halfSize = size / 2
 
-    // Asteroid sprite sheet layout: 2 columns × 3 rows
-    // Columns: 0 = orange, 1 = blue
-    // Rows: 0 = small (fast), 1 = medium, 2 = large (slow)
-    val totalColumns = 2
-    val totalRows = 3
-    val frameWidth = asteroidSprite.width / totalColumns
-    val frameHeight = asteroidSprite.height / totalRows
+    when (enemy.visualStyle) {
+        EnemyVisualStyle.SHAPE_TRIANGLE -> {
+            // Draw triangle pointing down
+            val path = Path().apply {
+                moveTo(centerX, centerY + halfSize)  // Bottom point
+                lineTo(centerX - halfSize, centerY - halfSize)  // Top left
+                lineTo(centerX + halfSize, centerY - halfSize)  // Top right
+                close()
+            }
+            drawPath(
+                path = path,
+                color = renderer?.let { getEnemyColor(enemy.spriteVariant) } ?: Color(0xFFFF4444)
+            )
+            // Optional thin outline
+            drawPath(
+                path = path,
+                color = Color.White,
+                style = Stroke(width = 2f)
+            )
+        }
 
-    // Map enemy type to asteroid size row
-    val row = when (enemy.type) {
-        0 -> 1  // Straight Diver: Medium
-        1 -> 1  // Zigzagger: Medium
-        2 -> 2  // Follower: Large
-        3 -> 0  // Speed Demon: Small (fastest)
-        4 -> 2  // Swooper: Large
-        else -> 1
+        EnemyVisualStyle.SHAPE_SQUARE -> {
+            // Draw square
+            drawRect(
+                color = renderer?.let { getEnemyColor(enemy.spriteVariant) } ?: Color(0xFF4444FF),
+                topLeft = Offset(centerX - halfSize, centerY - halfSize),
+                size = Size(size, size)
+            )
+            // Optional thin outline
+            drawRect(
+                color = Color.White,
+                topLeft = Offset(centerX - halfSize, centerY - halfSize),
+                size = Size(size, size),
+                style = Stroke(width = 2f)
+            )
+        }
+
+        EnemyVisualStyle.SHAPE_RECT -> {
+            // Draw rectangle (wider than tall)
+            val width = size * 1.4f
+            val height = size * 0.7f
+            drawRect(
+                color = renderer?.let { getEnemyColor(enemy.spriteVariant) } ?: Color(0xFF44FF44),
+                topLeft = Offset(centerX - width / 2, centerY - height / 2),
+                size = Size(width, height)
+            )
+            // Optional thin outline
+            drawRect(
+                color = Color.White,
+                topLeft = Offset(centerX - width / 2, centerY - height / 2),
+                size = Size(width, height),
+                style = Stroke(width = 2f)
+            )
+        }
+
+        EnemyVisualStyle.SHAPE_CIRCLE -> {
+            // Draw circle
+            drawCircle(
+                color = renderer?.let { getEnemyColor(enemy.spriteVariant) } ?: Color(0xFFFFAA44),
+                radius = halfSize,
+                center = Offset(centerX, centerY)
+            )
+            // Optional thin outline
+            drawCircle(
+                color = Color.White,
+                radius = halfSize,
+                center = Offset(centerX, centerY),
+                style = Stroke(width = 2f)
+            )
+        }
+
+        EnemyVisualStyle.SPRITE_EVIL_SHIP_001 -> {
+            // Draw sprite if available, fallback to circle
+            renderer?.evilShipSprite?.let { sprite ->
+                val destOffset = IntOffset((centerX - halfSize).toInt(), (centerY - halfSize).toInt())
+                val destSize = IntSize(size.toInt(), size.toInt())
+
+                drawImage(
+                    image = sprite,
+                    dstOffset = destOffset,
+                    dstSize = destSize
+                )
+            } ?: run {
+                // Fallback to circle if sprite not loaded
+                drawCircle(
+                    color = Color(0xFFFF00FF),
+                    radius = halfSize,
+                    center = Offset(centerX, centerY)
+                )
+            }
+        }
     }
+}
 
-    // Use sprite variant (0 = orange, 1 = blue)
-    val column = enemy.spriteVariant
-
-    // Calculate source rectangle
-    val srcOffset = IntOffset(column * frameWidth, row * frameHeight)
-    val srcSize = IntSize(frameWidth, frameHeight)
-
-    // Calculate destination position (centered on enemy position)
-    val destOffset = IntOffset((centerX - size / 2).toInt(), (centerY - size / 2).toInt())
-    val destSize = IntSize(size.toInt(), size.toInt())
-
-    // Draw the asteroid sprite
-    drawImage(
-        image = asteroidSprite,
-        srcOffset = srcOffset,
-        srcSize = srcSize,
-        dstOffset = destOffset,
-        dstSize = destSize
-    )
+/**
+ * Helper extension function to get enemy color.
+ */
+private fun EnemyRenderer.getEnemyColor(variant: Int): Color {
+    return when (variant % 3) {
+        0 -> Color(0xFFFF4444) // Red
+        1 -> Color(0xFF4444FF) // Blue
+        else -> Color(0xFF44FF44) // Green
+    }
 }
 
 // Draw floating space center (shop)

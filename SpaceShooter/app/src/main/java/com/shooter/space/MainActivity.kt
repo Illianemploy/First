@@ -2073,7 +2073,7 @@ fun DrawScope.drawEnemy(enemy: Enemy, renderer: EnemyRenderer?) {
             }
             drawPath(
                 path = path,
-                color = renderer?.let { getEnemyColor(enemy.spriteVariant) } ?: Color(0xFFFF4444)
+                color = getEnemyColor(enemy.spriteVariant)
             )
             // Optional thin outline
             drawPath(
@@ -2086,7 +2086,7 @@ fun DrawScope.drawEnemy(enemy: Enemy, renderer: EnemyRenderer?) {
         EnemyVisualStyle.SHAPE_SQUARE -> {
             // Draw square
             drawRect(
-                color = renderer?.let { getEnemyColor(enemy.spriteVariant) } ?: Color(0xFF4444FF),
+                color = getEnemyColor(enemy.spriteVariant),
                 topLeft = Offset(centerX - halfSize, centerY - halfSize),
                 size = Size(size, size)
             )
@@ -2104,7 +2104,7 @@ fun DrawScope.drawEnemy(enemy: Enemy, renderer: EnemyRenderer?) {
             val width = size * 1.4f
             val height = size * 0.7f
             drawRect(
-                color = renderer?.let { getEnemyColor(enemy.spriteVariant) } ?: Color(0xFF44FF44),
+                color = getEnemyColor(enemy.spriteVariant),
                 topLeft = Offset(centerX - width / 2, centerY - height / 2),
                 size = Size(width, height)
             )
@@ -2120,7 +2120,7 @@ fun DrawScope.drawEnemy(enemy: Enemy, renderer: EnemyRenderer?) {
         EnemyVisualStyle.SHAPE_CIRCLE -> {
             // Draw circle
             drawCircle(
-                color = renderer?.let { getEnemyColor(enemy.spriteVariant) } ?: Color(0xFFFFAA44),
+                color = getEnemyColor(enemy.spriteVariant),
                 radius = halfSize,
                 center = Offset(centerX, centerY)
             )
@@ -2157,9 +2157,10 @@ fun DrawScope.drawEnemy(enemy: Enemy, renderer: EnemyRenderer?) {
 }
 
 /**
- * Helper extension function to get enemy color.
+ * Get color for an enemy based on sprite variant.
+ * Used for procedural shapes.
  */
-private fun EnemyRenderer.getEnemyColor(variant: Int): Color {
+private fun getEnemyColor(variant: Int): Color {
     return when (variant % 3) {
         0 -> Color(0xFFFF4444) // Red
         1 -> Color(0xFF4444FF) // Blue

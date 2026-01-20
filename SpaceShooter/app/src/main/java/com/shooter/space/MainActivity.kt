@@ -71,6 +71,21 @@ data class SpaceCenter(
     var isActive: Boolean = true
 )
 
+// Debug overlay metrics (only available in debug builds)
+data class DebugMetrics(
+    var fps: Int = 0,
+    var avgFrameTime: Float = 0f,
+    var worstFrameTime: Float = 0f,
+    var enemyCount: Int = 0,
+    var bulletCount: Int = 0,
+    var spawnInterval: Long = 0L,
+    var speedMultiplier: Float = 0f,
+    var enemyHealth: Int = 0,
+    var score: Int = 0,
+    var currency: Int = 0,
+    var difficultyLevel: Int = 0
+)
+
 // Shop system
 enum class ShopItemType {
     FIRE_RATE, BULLET_SPEED, SCORE_BOOST, CURRENCY_BOOST,
@@ -919,6 +934,12 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
     // Track enemy health for persistence across hits
     val enemyHealthMap = remember { mutableMapOf<Enemy, Int>() }
 
+    // Debug overlay state (only enabled in debug builds)
+    var debugOverlayEnabled by remember { mutableStateOf(false) }
+    var debugMetrics by remember { mutableStateOf(DebugMetrics()) }
+    var debugTapCount by remember { mutableIntStateOf(0) }
+    var lastDebugTap by remember { mutableLongStateOf(0L) }
+
     // Initialize parallax background system and other visual effects
     LaunchedEffect(Unit) {
         // Initialize parallax background system (2 layers: scrolling stars + static planet)
@@ -959,11 +980,47 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
         var cachedSpeedMultiplier = 1.0f
         var cachedEnemyHealth = 1
 
+        // Debug metrics tracking (250ms update interval to avoid per-frame overhead)
+        var lastDebugUpdate = 0L
+        val frameTimes = mutableListOf<Long>()
+        var lastFrameTime = System.currentTimeMillis()
+
         while (isActive && isAlive) {
             delay(16) // ~60 FPS
 
             val currentTime = System.currentTimeMillis()
             val survivedMilliseconds = currentTime - gameStartTime - pausedTime
+
+            // Track frame time for debug overlay (only if debug is enabled)
+            if (BuildConfig.DEBUG && debugOverlayEnabled) {
+                val frameTime = currentTime - lastFrameTime
+                frameTimes.add(frameTime)
+
+                // Keep only last 60 frames (1 second at 60 FPS)
+                if (frameTimes.size > 60) {
+                    frameTimes.removeAt(0)
+                }
+
+                lastFrameTime = currentTime
+
+                // Update debug metrics every 250ms
+                if (currentTime - lastDebugUpdate > 250) {
+                    debugMetrics = debugMetrics.copy(
+                        fps = if (frameTimes.isNotEmpty()) (1000f / frameTimes.average().toFloat()).toInt() else 0,
+                        avgFrameTime = frameTimes.average().toFloat(),
+                        worstFrameTime = frameTimes.maxOrNull()?.toFloat() ?: 0f,
+                        enemyCount = enemies.size,
+                        bulletCount = bullets.size,
+                        spawnInterval = cachedSpawnInterval,
+                        speedMultiplier = cachedSpeedMultiplier,
+                        enemyHealth = cachedEnemyHealth,
+                        score = score,
+                        currency = earnedCurrency,
+                        difficultyLevel = difficultyScaler.getCurrentLevel()
+                    )
+                    lastDebugUpdate = currentTime
+                }
+            }
 
             // Handle space center updates separately (needed even when shop is open)
             // Space Center (floating shop) spawning and update logic
@@ -1348,6 +1405,29 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                         )
                     }
                 }
+                .pointerInput(Unit) {
+                    // Debug overlay toggle: 5 quick taps in top-right corner (only in debug builds)
+                    if (BuildConfig.DEBUG) {
+                        androidx.compose.foundation.gestures.detectTapGestures { offset ->
+                            val debugZoneSize = 150f
+                            val isInDebugZone = offset.x > (screenWidth - debugZoneSize) && offset.y < debugZoneSize
+
+                            if (isInDebugZone) {
+                                val currentTime = System.currentTimeMillis()
+                                if (currentTime - lastDebugTap < 500) {
+                                    debugTapCount++
+                                    if (debugTapCount >= 4) {  // 5th tap toggles (0-indexed, so >= 4)
+                                        debugOverlayEnabled = !debugOverlayEnabled
+                                        debugTapCount = 0
+                                    }
+                                } else {
+                                    debugTapCount = 0
+                                }
+                                lastDebugTap = currentTime
+                            }
+                        }
+                    }
+                }
         ) {
             // Draw parallax backgrounds: scrolling stars (back) → static planet (front)
             backgroundManager.draw(this)
@@ -1514,6 +1594,99 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                 fontWeight = FontWeight.Bold,
                 color = Color.Red,
                 modifier = Modifier.align(Alignment.Center)
+            )
+        }
+
+        // Debug overlay (only in debug builds)
+        if (BuildConfig.DEBUG && debugOverlayEnabled) {
+            Card(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(8.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xCC000000) // Semi-transparent black
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = "DEBUG OVERLAY",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF00FF00) // Green
+                    )
+                    Text(
+                        text = "FPS: ${debugMetrics.fps}",
+                        fontSize = 12.sp,
+                        color = when {
+                            debugMetrics.fps >= 55 -> Color(0xFF00FF00) // Green
+                            debugMetrics.fps >= 45 -> Color(0xFFFFAA00) // Orange
+                            else -> Color(0xFFFF0000) // Red
+                        }
+                    )
+                    Text(
+                        text = "Avg Frame: ${String.format("%.1f", debugMetrics.avgFrameTime)}ms",
+                        fontSize = 12.sp,
+                        color = Color.White
+                    )
+                    Text(
+                        text = "Worst Frame: ${String.format("%.1f", debugMetrics.worstFrameTime)}ms",
+                        fontSize = 12.sp,
+                        color = if (debugMetrics.worstFrameTime > 33f) Color(0xFFFF0000) else Color.White
+                    )
+                    Text(
+                        text = "Enemies: ${debugMetrics.enemyCount}",
+                        fontSize = 12.sp,
+                        color = Color.White
+                    )
+                    Text(
+                        text = "Bullets: ${debugMetrics.bulletCount}",
+                        fontSize = 12.sp,
+                        color = Color.White
+                    )
+                    Text(
+                        text = "Spawn Interval: ${debugMetrics.spawnInterval}ms",
+                        fontSize = 12.sp,
+                        color = Color.White
+                    )
+                    Text(
+                        text = "Speed Mult: ${String.format("%.2f", debugMetrics.speedMultiplier)}x",
+                        fontSize = 12.sp,
+                        color = Color.White
+                    )
+                    Text(
+                        text = "Enemy HP: ${debugMetrics.enemyHealth}",
+                        fontSize = 12.sp,
+                        color = Color.White
+                    )
+                    Text(
+                        text = "Difficulty: Lvl ${debugMetrics.difficultyLevel}",
+                        fontSize = 12.sp,
+                        color = Color(0xFFFFD700) // Gold
+                    )
+                    Text(
+                        text = "Score: ${debugMetrics.score}",
+                        fontSize = 12.sp,
+                        color = Color.Cyan
+                    )
+                    Text(
+                        text = "Currency: ${debugMetrics.currency} \$M",
+                        fontSize = 12.sp,
+                        color = Color(0xFF00FF00)
+                    )
+                }
+            }
+
+            // Debug toggle hint
+            Text(
+                text = "Tap 5x in top-right to toggle",
+                fontSize = 10.sp,
+                color = Color(0x88FFFFFF),
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp)
             )
         }
     }

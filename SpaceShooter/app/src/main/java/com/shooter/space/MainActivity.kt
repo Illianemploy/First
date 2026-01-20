@@ -45,14 +45,17 @@ import kotlin.random.Random
 // Game entities
 data class Star(val x: Float, val y: Float, val size: Float, val speed: Float, val layer: Int = 0)
 data class Enemy(
-    val x: Float,
+    var x: Float,
     var y: Float,
     val size: Float,
     val speed: Float,
     val type: Int,
     var timeAlive: Float = 0f,
     var rotation: Float = 0f,
-    val spriteVariant: Int = 0  // 0 = left/orange, 1 = right/blue
+    val spriteVariant: Int = 0,  // 0 = left/orange, 1 = right/blue
+    var health: Int = 1,                      // Current health (hits remaining)
+    val maxHealth: Int = 1,                   // Maximum health
+    var behaviorController: EnemyBehaviorController? = null  // AI behavior controller
 )
 data class Player(var x: Float, var y: Float, val size: Float = 60f, var velocityX: Float = 0f, var velocityY: Float = 0f)
 data class Bullet(val x: Float, var y: Float, val speed: Float = 20f)
@@ -102,6 +105,282 @@ data class RiskState(
     val onSuccess: () -> Unit,
     val onFailure: () -> Unit
 )
+
+// ============================================================================
+// GAME ARCHITECTURE - Core Systems
+// ============================================================================
+
+/**
+ * Enemy behavior states for modular AI system.
+ * Each state represents a distinct behavior pattern.
+ */
+enum class EnemyState {
+    APPROACH,  // Move directly toward player
+    STRAFE,    // Move sideways while maintaining distance
+    IDLE,      // Move at constant speed (default behavior)
+    FLEE       // Move away from player
+}
+
+/**
+ * Weapon modifier system for data-driven weapon customization.
+ * Modifiers are stackable and affect weapon behavior without visual changes.
+ */
+data class WeaponModifier(
+    val id: String,
+    val fireRateMultiplier: Float = 1f,      // <1 = faster, >1 = slower
+    val projectileCount: Int = 1,             // Number of bullets per shot
+    val spreadAngle: Float = 0f,              // Angle spread in degrees (0 = straight)
+    val isPiercing: Boolean = false,          // Bullets go through enemies
+    val isChaining: Boolean = false,          // Bullets chain between nearby enemies
+    val chainRange: Float = 100f,             // Range for chain effect
+    val maxChains: Int = 3                    // Max number of chain bounces
+)
+
+/**
+ * Current weapon statistics, computed from base stats + active modifiers.
+ */
+data class WeaponStats(
+    val baseFireRate: Long = 200L,           // Base time between shots (ms)
+    val activeModifiers: List<WeaponModifier> = emptyList()
+) {
+    // Computed fire rate after all modifiers
+    val effectiveFireRate: Long
+        get() {
+            val multiplier = activeModifiers.fold(1f) { acc, mod -> acc * mod.fireRateMultiplier }
+            return (baseFireRate * multiplier).toLong()
+        }
+
+    // Total bullets fired per shot
+    val totalProjectileCount: Int
+        get() = activeModifiers.sumOf { it.projectileCount }.coerceAtLeast(1)
+
+    // Maximum spread angle
+    val maxSpreadAngle: Float
+        get() = activeModifiers.maxOfOrNull { it.spreadAngle } ?: 0f
+
+    // Check if any modifier has piercing
+    val hasPiercing: Boolean
+        get() = activeModifiers.any { it.isPiercing }
+
+    // Check if any modifier has chaining
+    val hasChaining: Boolean
+        get() = activeModifiers.any { it.isChaining }
+
+    // Maximum chain range
+    val chainRange: Float
+        get() = activeModifiers.filter { it.isChaining }.maxOfOrNull { it.chainRange } ?: 0f
+
+    // Maximum chain count
+    val maxChains: Int
+        get() = activeModifiers.filter { it.isChaining }.maxOfOrNull { it.maxChains } ?: 0
+}
+
+/**
+ * Dynamic difficulty configuration.
+ * All parameters are tunable for game balance.
+ */
+data class DifficultyConfig(
+    // Spawn rate scaling
+    val baseSpawnInterval: Long = 1000L,      // Base time between spawns (ms)
+    val minSpawnInterval: Long = 300L,        // Minimum spawn interval (ms)
+    val spawnScalingFactor: Float = 0.95f,    // Multiplier per difficulty level
+
+    // Enemy speed scaling
+    val baseSpeedMultiplier: Float = 1.0f,    // Base enemy speed multiplier
+    val maxSpeedMultiplier: Float = 2.5f,     // Maximum speed multiplier
+    val speedScalingFactor: Float = 0.05f,    // Speed increase per difficulty level
+
+    // Enemy health scaling
+    val baseHealth: Int = 1,                  // Base enemy health (hits to kill)
+    val maxHealth: Int = 5,                   // Maximum enemy health
+    val healthScalingInterval: Int = 5,       // Difficulty levels per health increase
+
+    // Difficulty progression
+    val scorePerLevel: Int = 500,             // Score required per difficulty level
+    val timePerLevel: Long = 30000L           // Time (ms) per difficulty level (whichever comes first)
+)
+
+/**
+ * Difficulty scaler that adjusts game parameters based on progression.
+ * Uses both time survived and score to determine difficulty level.
+ */
+class DifficultyScaler(private val config: DifficultyConfig = DifficultyConfig()) {
+    private var currentLevel: Int = 0
+
+    /**
+     * Update difficulty based on time and score.
+     * Returns current difficulty level.
+     */
+    fun update(survivedMillis: Long, currentScore: Int): Int {
+        val timeLevel = (survivedMillis / config.timePerLevel).toInt()
+        val scoreLevel = currentScore / config.scorePerLevel
+
+        // Use whichever progression is further
+        currentLevel = maxOf(timeLevel, scoreLevel)
+        return currentLevel
+    }
+
+    /**
+     * Get current spawn interval based on difficulty.
+     */
+    fun getSpawnInterval(): Long {
+        val scaled = (config.baseSpawnInterval * config.spawnScalingFactor.pow(currentLevel)).toLong()
+        return scaled.coerceAtLeast(config.minSpawnInterval)
+    }
+
+    /**
+     * Get current enemy speed multiplier based on difficulty.
+     */
+    fun getSpeedMultiplier(): Float {
+        val increase = config.speedScalingFactor * currentLevel
+        return (config.baseSpeedMultiplier + increase).coerceAtMost(config.maxSpeedMultiplier)
+    }
+
+    /**
+     * Get current enemy health based on difficulty.
+     */
+    fun getEnemyHealth(): Int {
+        val healthLevel = currentLevel / config.healthScalingInterval
+        return (config.baseHealth + healthLevel).coerceAtMost(config.maxHealth)
+    }
+
+    /**
+     * Get current difficulty level (useful for UI or debugging).
+     */
+    fun getCurrentLevel(): Int = currentLevel
+}
+
+/**
+ * Enemy behavior controller.
+ * Manages state transitions and behavior execution.
+ */
+class EnemyBehaviorController {
+    private var currentState: EnemyState = EnemyState.IDLE
+    private var stateTimer: Float = 0f
+    private var nextStateChange: Float = Random.nextFloat() * 3f + 2f  // 2-5 seconds
+
+    /**
+     * Update enemy behavior state based on conditions.
+     * Returns the current state after update.
+     */
+    fun update(
+        enemy: Enemy,
+        playerX: Float,
+        playerY: Float,
+        deltaTime: Float,
+        health: Int,
+        maxHealth: Int
+    ): EnemyState {
+        stateTimer += deltaTime
+
+        val distanceToPlayer = kotlin.math.sqrt(
+            (enemy.x - playerX) * (enemy.x - playerX) +
+            (enemy.y - playerY) * (enemy.y - playerY)
+        )
+
+        // State transition logic
+        when (currentState) {
+            EnemyState.IDLE -> {
+                // Randomly switch to other states or when player is close
+                if (stateTimer >= nextStateChange) {
+                    currentState = when {
+                        distanceToPlayer < 200f && Random.nextFloat() > 0.5f -> EnemyState.STRAFE
+                        health < maxHealth * 0.3f -> EnemyState.FLEE
+                        else -> EnemyState.APPROACH
+                    }
+                    resetStateTimer()
+                }
+            }
+            EnemyState.APPROACH -> {
+                // Switch to strafe if too close or flee if low health
+                if (distanceToPlayer < 150f || stateTimer >= nextStateChange) {
+                    currentState = if (health < maxHealth * 0.3f) {
+                        EnemyState.FLEE
+                    } else {
+                        EnemyState.STRAFE
+                    }
+                    resetStateTimer()
+                }
+            }
+            EnemyState.STRAFE -> {
+                // Return to approach or flee based on health
+                if (stateTimer >= nextStateChange) {
+                    currentState = if (health < maxHealth * 0.3f) {
+                        EnemyState.FLEE
+                    } else {
+                        EnemyState.APPROACH
+                    }
+                    resetStateTimer()
+                }
+            }
+            EnemyState.FLEE -> {
+                // Return to idle when far enough or health recovered
+                if (distanceToPlayer > 400f || stateTimer >= nextStateChange) {
+                    currentState = EnemyState.IDLE
+                    resetStateTimer()
+                }
+            }
+        }
+
+        return currentState
+    }
+
+    /**
+     * Calculate movement delta based on current state.
+     * Returns Pair<deltaX, deltaY> to apply to enemy position.
+     */
+    fun calculateMovement(
+        enemy: Enemy,
+        playerX: Float,
+        playerY: Float,
+        baseSpeed: Float,
+        speedMultiplier: Float
+    ): Pair<Float, Float> {
+        val dx = playerX - enemy.x
+        val dy = playerY - enemy.y
+        val distance = kotlin.math.sqrt(dx * dx + dy * dy)
+
+        val finalSpeed = baseSpeed * speedMultiplier
+
+        return when (currentState) {
+            EnemyState.APPROACH -> {
+                // Move toward player
+                if (distance > 0) {
+                    val normalizedX = dx / distance
+                    val normalizedY = dy / distance
+                    Pair(normalizedX * finalSpeed * 0.5f, normalizedY * finalSpeed * 0.5f)
+                } else {
+                    Pair(0f, finalSpeed)
+                }
+            }
+            EnemyState.STRAFE -> {
+                // Move sideways relative to player
+                val perpX = -dy / distance.coerceAtLeast(1f)
+                val perpY = dx / distance.coerceAtLeast(1f)
+                Pair(perpX * finalSpeed * 0.7f, finalSpeed)
+            }
+            EnemyState.FLEE -> {
+                // Move away from player
+                if (distance > 0) {
+                    val normalizedX = -dx / distance
+                    val normalizedY = -dy / distance
+                    Pair(normalizedX * finalSpeed * 0.3f, normalizedY * finalSpeed * 0.3f)
+                } else {
+                    Pair(0f, finalSpeed)
+                }
+            }
+            EnemyState.IDLE -> {
+                // Default downward movement
+                Pair(0f, finalSpeed)
+            }
+        }
+    }
+
+    private fun resetStateTimer() {
+        stateTimer = 0f
+        nextStateChange = Random.nextFloat() * 3f + 2f
+    }
+}
 
 // Parallax background system
 data class ScrollingLayer(
@@ -612,6 +891,13 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
     var activeRisk by remember { mutableStateOf<RiskState?>(null) }
     var permanentMultiplierBonus by remember { mutableDoubleStateOf(0.0) }
 
+    // Core game systems
+    val difficultyScaler = remember { DifficultyScaler() }
+    var weaponStats by remember { mutableStateOf(WeaponStats()) }
+
+    // Track enemy health for persistence across hits
+    val enemyHealthMap = remember { mutableMapOf<Enemy, Int>() }
+
     // Initialize parallax background system and other visual effects
     LaunchedEffect(Unit) {
         // Initialize parallax background system (2 layers: scrolling stars + static planet)
@@ -772,12 +1058,39 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                 velocityY = player.velocityY * 0.85f
             )
 
-            // Auto-fire bullets (with fire rate upgrades)
-            val fireRateDelay = (200 * (1.0 - playerUpgrades.fireRateLevel * 0.2).coerceAtLeast(0.2)).toLong()
-            if (currentTime - lastBulletFire > fireRateDelay) {
+            // Auto-fire bullets (with weapon system and fire rate upgrades)
+            // Combine weapon stats with upgrade system
+            val upgradeFireRateMultiplier = (1.0 - playerUpgrades.fireRateLevel * 0.2).coerceAtLeast(0.2)
+            val finalFireRate = (weaponStats.effectiveFireRate * upgradeFireRateMultiplier).toLong()
+
+            if (currentTime - lastBulletFire > finalFireRate) {
                 // Apply bullet speed upgrade
                 val bulletSpeed = 20f * (1f + playerUpgrades.bulletSpeedLevel * 0.3f)
-                bullets = bullets + Bullet(player.x, player.y - player.size / 2, bulletSpeed)
+
+                // Fire bullets based on weapon stats (spread and multi-projectile)
+                val projectileCount = weaponStats.totalProjectileCount
+                val spreadAngle = weaponStats.maxSpreadAngle
+
+                if (projectileCount == 1 && spreadAngle == 0f) {
+                    // Single straight bullet (default)
+                    bullets = bullets + Bullet(player.x, player.y - player.size / 2, bulletSpeed)
+                } else {
+                    // Multi-projectile with spread
+                    val angleStep = if (projectileCount > 1) spreadAngle / (projectileCount - 1) else 0f
+                    val startAngle = -spreadAngle / 2
+
+                    repeat(projectileCount) { i ->
+                        val angle = startAngle + (angleStep * i)
+                        val angleRad = Math.toRadians(angle.toDouble())
+                        val offsetX = sin(angleRad).toFloat() * 10f  // Slight horizontal offset
+                        bullets = bullets + Bullet(
+                            player.x + offsetX,
+                            player.y - player.size / 2,
+                            bulletSpeed
+                        )
+                    }
+                }
+
                 lastBulletFire = currentTime
             }
 
@@ -788,100 +1101,149 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                 else bullet.copy(y = newY)
             }
 
-            // Spawn enemies with different types
-            if (currentTime - lastSpawn > 1000) {
+            // Update difficulty based on time and score
+            difficultyScaler.update(survivedMilliseconds, score)
+            val spawnInterval = difficultyScaler.getSpawnInterval()
+            val difficultySpeedMult = difficultyScaler.getSpeedMultiplier()
+            val enemyMaxHealth = difficultyScaler.getEnemyHealth()
+
+            // Spawn enemies with difficulty scaling
+            if (currentTime - lastSpawn > spawnInterval) {
                 val enemyType = Random.nextInt(5) // 5 different enemy types
+                val baseSpeed = when (enemyType) {
+                    3 -> Random.nextFloat() * 2f + 5f // Fast enemy (small asteroid)
+                    else -> Random.nextFloat() * 3f + 2f
+                }
+
                 val newEnemy = Enemy(
                     x = Random.nextFloat() * (screenWidth - 80f) + 40f,
                     y = -50f,
                     size = 50f,
-                    speed = when (enemyType) {
-                        3 -> Random.nextFloat() * 2f + 5f // Fast enemy (small asteroid)
-                        else -> Random.nextFloat() * 3f + 2f
-                    },
+                    speed = baseSpeed,
                     type = enemyType,
                     timeAlive = 0f,
                     rotation = Random.nextFloat() * 360f,
-                    spriteVariant = Random.nextInt(2) // 0 = orange, 1 = blue
+                    spriteVariant = Random.nextInt(2), // 0 = orange, 1 = blue
+                    health = enemyMaxHealth,
+                    maxHealth = enemyMaxHealth,
+                    behaviorController = EnemyBehaviorController()
                 )
                 enemies = enemies + newEnemy
                 lastSpawn = currentTime
             }
 
-            // Update enemies with different behaviors
-            // Apply challenge speed modifier if active
+            // Update enemies using behavior system and difficulty scaling
+            // Combine challenge modifier with difficulty scaling
             val challengeSpeedMultiplier = if (activeRisk?.type == ShopItemType.SURVIVAL_CHALLENGE && activeRisk?.isActive == true) 1.25f else 1.0f
+            val finalSpeedMultiplier = difficultySpeedMult * challengeSpeedMultiplier
 
             enemies = enemies.mapNotNull { enemy ->
+                // Update time and rotation
                 val updatedEnemy = enemy.copy(
                     timeAlive = enemy.timeAlive + 0.016f,
-                    rotation = enemy.rotation + (2f * enemy.type) // Different rotation speeds per type
+                    rotation = enemy.rotation + (2f * enemy.type)
                 )
 
-                when (updatedEnemy.type) {
-                    0 -> {
-                        // Straight down
-                        val newY = updatedEnemy.y + updatedEnemy.speed * 4 * challengeSpeedMultiplier
-                        if (newY > screenHeight + 100) null
-                        else updatedEnemy.copy(y = newY)
-                    }
-                    1 -> {
-                        // Zigzag pattern
-                        val newY = updatedEnemy.y + updatedEnemy.speed * 3 * challengeSpeedMultiplier
-                        val zigzagX = updatedEnemy.x + sin(updatedEnemy.timeAlive * 3f) * 5f
-                        if (newY > screenHeight + 100) null
-                        else updatedEnemy.copy(x = zigzagX.coerceIn(0f, screenWidth), y = newY)
-                    }
-                    2 -> {
-                        // Follow player horizontally
-                        val newY = updatedEnemy.y + updatedEnemy.speed * 3 * challengeSpeedMultiplier
-                        val targetX = if (player.x > updatedEnemy.x) updatedEnemy.x + 3f else updatedEnemy.x - 3f
-                        if (newY > screenHeight + 100) null
-                        else updatedEnemy.copy(x = targetX.coerceIn(0f, screenWidth), y = newY)
-                    }
-                    3 -> {
-                        // Fast straight down
-                        val newY = updatedEnemy.y + updatedEnemy.speed * 4 * challengeSpeedMultiplier
-                        if (newY > screenHeight + 100) null
-                        else updatedEnemy.copy(y = newY)
-                    }
-                    4 -> {
-                        // Diagonal swoop
-                        val newY = updatedEnemy.y + updatedEnemy.speed * 3 * challengeSpeedMultiplier
-                        val swoopX = updatedEnemy.x + cos(updatedEnemy.timeAlive * 2f) * 4f
-                        if (newY > screenHeight + 100) null
-                        else updatedEnemy.copy(x = swoopX.coerceIn(0f, screenWidth), y = newY)
-                    }
-                    else -> {
-                        val newY = updatedEnemy.y + updatedEnemy.speed * 4 * challengeSpeedMultiplier
-                        if (newY > screenHeight + 100) null
-                        else updatedEnemy.copy(y = newY)
+                // Use behavior controller if available, otherwise fall back to type-based movement
+                val behaviorController = updatedEnemy.behaviorController
+                val (deltaX, deltaY) = if (behaviorController != null) {
+                    // Update behavior state
+                    behaviorController.update(
+                        enemy = updatedEnemy,
+                        playerX = player.x,
+                        playerY = player.y,
+                        deltaTime = 0.016f,
+                        health = updatedEnemy.health,
+                        maxHealth = updatedEnemy.maxHealth
+                    )
+
+                    // Get movement from behavior
+                    behaviorController.calculateMovement(
+                        enemy = updatedEnemy,
+                        playerX = player.x,
+                        playerY = player.y,
+                        baseSpeed = updatedEnemy.speed,
+                        speedMultiplier = finalSpeedMultiplier
+                    )
+                } else {
+                    // Fallback to old type-based movement for compatibility
+                    val speed = updatedEnemy.speed * finalSpeedMultiplier
+                    when (updatedEnemy.type) {
+                        0 -> Pair(0f, speed * 4)  // Straight down
+                        1 -> Pair(sin(updatedEnemy.timeAlive * 3f) * 5f, speed * 3)  // Zigzag
+                        2 -> {
+                            val dirX = if (player.x > updatedEnemy.x) 3f else -3f
+                            Pair(dirX, speed * 3)  // Follow player
+                        }
+                        3 -> Pair(0f, speed * 4)  // Fast straight
+                        4 -> Pair(cos(updatedEnemy.timeAlive * 2f) * 4f, speed * 3)  // Swoop
+                        else -> Pair(0f, speed * 4)
                     }
                 }
+
+                // Apply movement
+                val newX = (updatedEnemy.x + deltaX).coerceIn(0f, screenWidth)
+                val newY = updatedEnemy.y + deltaY
+
+                // Remove if off screen
+                if (newY > screenHeight + 100) null
+                else updatedEnemy.copy(x = newX, y = newY)
             }
 
-            // Check bullet-enemy collisions
+            // Check bullet-enemy collisions with health and weapon modifiers
             val enemiesToRemove = mutableSetOf<Enemy>()
             val bulletsToRemove = mutableSetOf<Bullet>()
+            val damagedEnemies = mutableMapOf<Enemy, Int>()  // Track health changes
 
             bullets.forEach { bullet ->
+                var bulletHitCount = 0  // Track hits for chaining
+
                 enemies.forEach { enemy ->
                     val dx = bullet.x - enemy.x
                     val dy = bullet.y - enemy.y
                     val distance = kotlin.math.sqrt(dx * dx + dy * dy)
-                    if (distance < enemy.size / 2) {
-                        enemiesToRemove.add(enemy)
-                        bulletsToRemove.add(bullet)
 
-                        // Award score with multiplier for destroying enemy
-                        val basePoints = 10
-                        val earnedPoints = (basePoints * currentMultiplier).toInt()
-                        score += earnedPoints
+                    if (distance < enemy.size / 2) {
+                        // Reduce enemy health
+                        val newHealth = enemy.health - 1
+                        damagedEnemies[enemy] = newHealth
+
+                        if (newHealth <= 0) {
+                            // Enemy destroyed
+                            enemiesToRemove.add(enemy)
+
+                            // Award score with multiplier for destroying enemy
+                            val basePoints = 10 * enemy.maxHealth  // Scale points with health
+                            val earnedPoints = (basePoints * currentMultiplier).toInt()
+                            score += earnedPoints
+                        }
+
+                        bulletHitCount++
+
+                        // Remove bullet unless it's piercing
+                        if (!weaponStats.hasPiercing) {
+                            bulletsToRemove.add(bullet)
+                        }
+
+                        // Stop checking other enemies for this bullet unless it has chaining
+                        if (!weaponStats.hasChaining || bulletHitCount >= weaponStats.maxChains) {
+                            return@forEach
+                        }
                     }
                 }
             }
 
-            enemies = enemies.filter { it !in enemiesToRemove }
+            // Apply health changes to enemies (create new list with updated health)
+            enemies = enemies.mapNotNull { enemy ->
+                if (enemy in enemiesToRemove) {
+                    null  // Remove destroyed enemies
+                } else if (enemy in damagedEnemies) {
+                    enemy.copy(health = damagedEnemies[enemy]!!)  // Update health
+                } else {
+                    enemy  // No change
+                }
+            }
+
             bullets = bullets.filter { it !in bulletsToRemove }
 
             // Check player-enemy collisions

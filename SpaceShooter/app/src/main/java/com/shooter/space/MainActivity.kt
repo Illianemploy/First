@@ -109,34 +109,31 @@ data class RiskState(
     val onFailure: () -> Unit
 )
 
-// Scrolling background system
-data class Background(
+// Parallax background system
+data class ScrollingLayer(
     val bitmap: ImageBitmap,
-    var y: Float
+    var y1: Float,  // First instance position
+    var y2: Float   // Second instance position for seamless looping
 )
 
 /**
- * Manages seamless infinitely scrolling vertical backgrounds.
- * Loads backgrounds on-demand and recycles them to minimize memory usage.
- * Guarantees no visual gaps or stutter with deterministic looping.
+ * Manages a 2-layer parallax background system.
+ * Layer 1 (Foreground): Static planet surface with transparency
+ * Layer 2 (Background): Scrolling starfield that loops seamlessly
  */
-class ScrollingBackgroundManager(
+class ParallaxBackgroundManager(
     private val context: Context,
     private val screenWidth: Float,
     private val screenHeight: Float
 ) {
-    private val backgroundList: List<String> = listOf(
-        "background_0001",
-        "background_0002",
-        "background_0003",
-        "background_0004",
-        "background_0005",
-        "background_0006"
-    )
+    // Layer 1: Static foreground (planet surface)
+    private var foregroundLayer: ImageBitmap? = null
 
-    private val activeBackgrounds: MutableList<Background> = mutableListOf()
-    private var currentBackgroundIndex: Int = 0
-    private val scrollSpeed: Float = 2.0f // pixels per frame (~120 px/sec at 60 FPS)
+    // Layer 2: Scrolling background (stars)
+    private var scrollingLayer: ScrollingLayer? = null
+
+    // Slow scroll speed for background depth effect
+    private val scrollSpeed: Float = 0.8f // pixels per frame (~48 px/sec at 60 FPS)
 
     /**
      * Loads a background bitmap from resources by name.
@@ -151,7 +148,7 @@ class ScrollingBackgroundManager(
 
         // Load with efficient options
         val options = BitmapFactory.Options().apply {
-            inPreferredConfig = android.graphics.Bitmap.Config.RGB_565 // Use less memory for backgrounds
+            inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888 // Support transparency
             inScaled = false
         }
 
@@ -174,92 +171,85 @@ class ScrollingBackgroundManager(
     }
 
     /**
-     * Initializes the background system by loading the first two backgrounds.
-     * Background 1 starts at y = 0 (visible on screen)
-     * Background 2 starts at y = -screenHeight (directly above, ready to scroll in)
+     * Initializes the parallax background system.
+     * Loads the static foreground layer and two instances of the scrolling background.
      */
     fun initialize() {
-        // Clear any existing backgrounds
-        activeBackgrounds.clear()
-        currentBackgroundIndex = 0
+        // Load static foreground layer (planet surface)
+        foregroundLayer = loadBackground("parallax_background_001")
 
-        // Load first background (visible)
-        val firstBg = Background(
-            bitmap = loadBackground(backgroundList[0]),
-            y = 0f
+        // Load scrolling background layer (stars) with two instances for seamless looping
+        val starfieldBitmap = loadBackground("parallax_background_002")
+        scrollingLayer = ScrollingLayer(
+            bitmap = starfieldBitmap,
+            y1 = 0f,              // First instance at screen top
+            y2 = -screenHeight    // Second instance directly above
         )
-        activeBackgrounds.add(firstBg)
-
-        // Load second background (above first, ready to scroll in)
-        val secondBg = Background(
-            bitmap = loadBackground(backgroundList[1]),
-            y = -screenHeight
-        )
-        activeBackgrounds.add(secondBg)
-
-        currentBackgroundIndex = 1 // Next background to load will be index 2
     }
 
     /**
-     * Updates background positions and handles recycling.
-     * Called every frame with delta time.
+     * Updates the scrolling background layer position.
+     * The foreground layer remains static.
      */
     fun update(deltaTime: Float) {
-        // Scroll all active backgrounds downward
-        activeBackgrounds.forEach { bg ->
-            bg.y += scrollSpeed
-        }
+        scrollingLayer?.let { layer ->
+            // Scroll both instances downward
+            layer.y1 += scrollSpeed
+            layer.y2 += scrollSpeed
 
-        // Check if the bottom-most background has scrolled off-screen
-        val bottomBackground = activeBackgrounds.firstOrNull()
-        if (bottomBackground != null && bottomBackground.y >= screenHeight) {
-            // Remove the off-screen background
-            activeBackgrounds.removeAt(0)
-
-            // Calculate next background index (wrap around)
-            val nextIndex = (currentBackgroundIndex + 1) % backgroundList.size
-
-            // Find the top-most background to position the new one above it
-            val topBackground = activeBackgrounds.lastOrNull()
-            val newY = if (topBackground != null) {
-                topBackground.y - screenHeight
-            } else {
-                -screenHeight
+            // When first instance scrolls completely off-screen, move it back to top
+            if (layer.y1 >= screenHeight) {
+                layer.y1 = layer.y2 - screenHeight
             }
 
-            // Load next background and position it above
-            val newBackground = Background(
-                bitmap = loadBackground(backgroundList[nextIndex]),
-                y = newY
-            )
-            activeBackgrounds.add(newBackground)
-
-            // Update current index
-            currentBackgroundIndex = nextIndex
+            // When second instance scrolls completely off-screen, move it back to top
+            if (layer.y2 >= screenHeight) {
+                layer.y2 = layer.y1 - screenHeight
+            }
         }
     }
 
     /**
-     * Draws all active backgrounds to the canvas.
-     * Draws from back to front (bottom to top of list).
+     * Draws the parallax background system.
+     * Z-order: Scrolling background (stars) → Static foreground (planet) → Game elements
      */
     fun draw(drawScope: DrawScope) {
-        activeBackgrounds.forEach { bg ->
+        // Draw scrolling background layer (stars) - furthest back
+        scrollingLayer?.let { layer ->
+            // Draw first instance
             drawScope.drawImage(
-                image = bg.bitmap,
-                dstOffset = IntOffset(0, bg.y.toInt()),
+                image = layer.bitmap,
+                dstOffset = IntOffset(0, layer.y1.toInt()),
+                dstSize = IntSize(screenWidth.toInt(), screenHeight.toInt())
+            )
+
+            // Draw second instance for seamless looping
+            drawScope.drawImage(
+                image = layer.bitmap,
+                dstOffset = IntOffset(0, layer.y2.toInt()),
+                dstSize = IntSize(screenWidth.toInt(), screenHeight.toInt())
+            )
+        }
+
+        // Draw static foreground layer (planet surface) - on top of scrolling stars
+        foregroundLayer?.let { layer ->
+            drawScope.drawImage(
+                image = layer,
+                dstOffset = IntOffset(0, 0),
                 dstSize = IntSize(screenWidth.toInt(), screenHeight.toInt())
             )
         }
     }
 
     /**
-     * Resets the background system to the initial state.
+     * Resets the parallax system to the initial state.
      * Useful for level restart or respawn.
      */
     fun reset() {
-        activeBackgrounds.clear()
-        initialize()
+        scrollingLayer?.let { layer ->
+            layer.y1 = 0f
+            layer.y2 = -screenHeight
+        }
     }
 }
 
@@ -593,9 +583,9 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
         BitmapFactory.decodeResource(context.resources, R.drawable.space_center02).asImageBitmap()
     }
 
-    // Initialize scrolling background manager
+    // Initialize parallax background manager
     val backgroundManager = remember {
-        ScrollingBackgroundManager(context, screenWidth, screenHeight)
+        ParallaxBackgroundManager(context, screenWidth, screenHeight)
     }
 
     var player by remember { mutableStateOf(Player(screenWidth / 2, screenHeight - 150f)) }
@@ -635,9 +625,9 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
     var activeRisk by remember { mutableStateOf<RiskState?>(null) }
     var permanentMultiplierBonus by remember { mutableDoubleStateOf(0.0) }
 
-    // Initialize scrolling backgrounds and parallax layers
+    // Initialize parallax background system and other visual effects
     LaunchedEffect(Unit) {
-        // Initialize scrolling background system
+        // Initialize parallax background system (2 layers: scrolling stars + static planet)
         backgroundManager.initialize()
 
         stars = List(100) {
@@ -777,7 +767,7 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
 
             gameTime += 0.016f
 
-            // Update scrolling backgrounds
+            // Update parallax background (only the scrolling starfield layer moves)
             backgroundManager.update(0.016f)
 
             // Calculate time-based multiplier for rewards
@@ -1121,7 +1111,7 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                     }
                 }
         ) {
-            // Draw scrolling backgrounds (first layer - behind everything)
+            // Draw parallax backgrounds: scrolling stars (back) → static planet (front)
             backgroundManager.draw(this)
 
             // Draw nebulae (background clouds)

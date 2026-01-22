@@ -26,6 +26,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -816,139 +818,144 @@ class EnemyBehaviorController {
 }
 
 // Parallax background system
-data class ScrollingLayer(
-    val bitmap: ImageBitmap,
-    var y1: Float,  // First instance position
-    var y2: Float   // Second instance position for seamless looping
+/**
+ * Single parallax layer data model.
+ * Bitmap decoding and scaling done ONCE in init, not per-frame.
+ */
+data class ParallaxLayer(
+    val resId: Int,
+    val speedPxPerSec: Float,  // 0f = static, >0 = scrolls downward
+    var offsetY: Float = 0f,
+    var bitmap: android.graphics.Bitmap? = null,
+    val paint: android.graphics.Paint = android.graphics.Paint().apply {
+        isFilterBitmap = false  // Pixel-art crispness (no bilinear filtering)
+    }
 )
 
 /**
- * Manages a 2-layer parallax background system.
- * Layer 1 (Foreground): Static planet surface with transparency
- * Layer 2 (Background): Scrolling starfield that loops seamlessly
+ * Manages multi-layer parallax background with pixel-perfect rendering.
+ * NO bitmap decode/scaling in update/draw loops.
+ * NO per-frame allocations for background rendering.
+ *
+ * Extension point: Add more layers in buildLayers() below.
  */
 class ParallaxBackgroundManager(
     private val context: Context,
     private val screenWidth: Float,
     private val screenHeight: Float
 ) {
-    // Layer 1: Static foreground (planet surface)
-    private var foregroundLayer: ImageBitmap? = null
-
-    // Layer 2: Scrolling background (stars)
-    private var scrollingLayer: ScrollingLayer? = null
-
-    // Slow scroll speed for background depth effect
-    private val scrollSpeed: Float = 0.8f // pixels per frame (~48 px/sec at 60 FPS)
+    private val layers = mutableListOf<ParallaxLayer>()
 
     /**
-     * Loads a background bitmap from resources by ID.
-     * Scales the bitmap to fit screen dimensions while maintaining aspect ratio.
+     * Extension point: Define all parallax layers here.
+     * Add more parallax layers by adding ParallaxLayer(resId, speedPxPerSec) here.
      */
-    private fun loadBackground(resourceId: Int): ImageBitmap {
-        // Load with efficient options
+    private fun buildLayers(): List<ParallaxLayer> {
+        return listOf(
+            // Background scrolling layer (furthest back)
+            ParallaxLayer(
+                resId = R.drawable.parallax_background_002,
+                speedPxPerSec = 120f  // Scrolls downward at 120 px/sec
+            ),
+            // Foreground static layer (on top)
+            ParallaxLayer(
+                resId = R.drawable.parallax_background_001,
+                speedPxPerSec = 0f  // Static (no movement)
+            )
+        )
+    }
+
+    /**
+     * Initializes all layers: decode bitmaps ONCE, scale if needed ONCE.
+     * Called at game start, NOT per-frame.
+     */
+    fun initialize() {
+        layers.clear()
+        layers.addAll(buildLayers())
+
         val options = BitmapFactory.Options().apply {
-            inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888 // Support transparency
+            inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888
             inScaled = false
         }
 
-        val bitmap = BitmapFactory.decodeResource(context.resources, resourceId, options)
+        for (layer in layers) {
+            val bitmap = BitmapFactory.decodeResource(context.resources, layer.resId, options)
 
-        // Scale bitmap to screen dimensions (maintain aspect ratio, crop if needed)
-        val scaledBitmap = android.graphics.Bitmap.createScaledBitmap(
-            bitmap,
-            screenWidth.toInt(),
-            screenHeight.toInt(),
-            true // Use bilinear filtering for smooth scaling
-        )
-
-        // Recycle original if different from scaled
-        if (bitmap != scaledBitmap) {
-            bitmap.recycle()
-        }
-
-        return scaledBitmap.asImageBitmap()
-    }
-
-    /**
-     * Initializes the parallax background system.
-     * Loads the static foreground layer and two instances of the scrolling background.
-     */
-    fun initialize() {
-        // Load static foreground layer (planet surface)
-        foregroundLayer = loadBackground(R.drawable.parallax_background_001)
-
-        // Load scrolling background layer (stars) with two instances for seamless looping
-        val starfieldBitmap = loadBackground(R.drawable.parallax_background_002)
-        scrollingLayer = ScrollingLayer(
-            bitmap = starfieldBitmap,
-            y1 = 0f,              // First instance at screen top
-            y2 = -screenHeight    // Second instance directly above
-        )
-    }
-
-    /**
-     * Updates the scrolling background layer position.
-     * The foreground layer remains static.
-     */
-    fun update(deltaTime: Float) {
-        scrollingLayer?.let { layer ->
-            // Scroll both instances downward
-            layer.y1 += scrollSpeed
-            layer.y2 += scrollSpeed
-
-            // When first instance scrolls completely off-screen, move it back to top
-            if (layer.y1 >= screenHeight) {
-                layer.y1 = layer.y2 - screenHeight
-            }
-
-            // When second instance scrolls completely off-screen, move it back to top
-            if (layer.y2 >= screenHeight) {
-                layer.y2 = layer.y1 - screenHeight
+            // Scale to screen dimensions if needed (done ONCE, not per-frame)
+            layer.bitmap = if (bitmap.width != screenWidth.toInt() || bitmap.height != screenHeight.toInt()) {
+                val scaled = android.graphics.Bitmap.createScaledBitmap(
+                    bitmap,
+                    screenWidth.toInt(),
+                    screenHeight.toInt(),
+                    false  // No bilinear filtering (pixel-art)
+                )
+                if (bitmap != scaled) bitmap.recycle()
+                scaled
+            } else {
+                bitmap
             }
         }
     }
 
     /**
-     * Draws the parallax background system.
-     * Z-order: Scrolling background (stars) → Static foreground (planet) → Game elements
+     * Updates scrolling layers based on delta time.
+     * Static layers (speed=0) are not updated.
+     */
+    fun update(dtSec: Float) {
+        for (layer in layers) {
+            if (layer.speedPxPerSec > 0f) {
+                val bitmapHeight = layer.bitmap?.height?.toFloat() ?: screenHeight
+                layer.offsetY = (layer.offsetY + layer.speedPxPerSec * dtSec) % bitmapHeight
+            }
+        }
+    }
+
+    /**
+     * Draws all layers using native Canvas (via drawIntoCanvas).
+     * NO allocations: reuses layer.paint, no new Rect/Matrix objects.
      */
     fun draw(drawScope: DrawScope) {
-        // Draw scrolling background layer (stars) - furthest back
-        scrollingLayer?.let { layer ->
-            // Draw first instance
-            drawScope.drawImage(
-                image = layer.bitmap,
-                dstOffset = IntOffset(0, layer.y1.toInt()),
-                dstSize = IntSize(screenWidth.toInt(), screenHeight.toInt())
-            )
+        drawScope.drawIntoCanvas { canvas ->
+            val nativeCanvas = canvas.nativeCanvas
 
-            // Draw second instance for seamless looping
-            drawScope.drawImage(
-                image = layer.bitmap,
-                dstOffset = IntOffset(0, layer.y2.toInt()),
-                dstSize = IntSize(screenWidth.toInt(), screenHeight.toInt())
-            )
-        }
+            for (layer in layers) {
+                val bitmap = layer.bitmap ?: continue
 
-        // Draw static foreground layer (planet surface) - on top of scrolling stars
-        foregroundLayer?.let { layer ->
-            drawScope.drawImage(
-                image = layer,
-                dstOffset = IntOffset(0, 0),
-                dstSize = IntSize(screenWidth.toInt(), screenHeight.toInt())
-            )
+                if (layer.speedPxPerSec == 0f) {
+                    // Static layer: draw once at (0, 0)
+                    nativeCanvas.drawBitmap(bitmap, 0f, 0f, layer.paint)
+                } else {
+                    // Scrolling layer: draw wrapped vertically for seamless looping
+                    val bitmapHeight = bitmap.height.toFloat()
+                    val y1 = -layer.offsetY
+                    val y2 = y1 + bitmapHeight
+
+                    // Draw first instance
+                    nativeCanvas.drawBitmap(bitmap, 0f, y1, layer.paint)
+
+                    // Draw second instance for seamless wrap
+                    nativeCanvas.drawBitmap(bitmap, 0f, y2, layer.paint)
+
+                    // If screen is very tall and bitmap is short, draw extra repeats
+                    // (Rare case: only if bitmapHeight < screenHeight/2)
+                    if (bitmapHeight < screenHeight / 2) {
+                        var yExtra = y2 + bitmapHeight
+                        while (yExtra < screenHeight) {
+                            nativeCanvas.drawBitmap(bitmap, 0f, yExtra, layer.paint)
+                            yExtra += bitmapHeight
+                        }
+                    }
+                }
+            }
         }
     }
 
     /**
-     * Resets the parallax system to the initial state.
-     * Useful for level restart or respawn.
+     * Resets all layer offsets to initial state.
      */
     fun reset() {
-        scrollingLayer?.let { layer ->
-            layer.y1 = 0f
-            layer.y2 = -screenHeight
+        for (layer in layers) {
+            layer.offsetY = 0f
         }
     }
 }

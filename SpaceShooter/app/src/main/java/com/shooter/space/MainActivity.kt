@@ -421,6 +421,43 @@ class PowerUpSystem {
     fun getRewardMultiplier(): Float {
         return if (hasEffect(PowerUpType.DOUBLE_REWARD)) 2.0f else 1.0f
     }
+
+    /**
+     * Reset power-up system to initial state.
+     */
+    fun reset() {
+        worldPowerUps.clear()
+        activeEffects.clear()
+        nextId = 0L
+    }
+
+    /**
+     * Activate a power-up effect directly (used by GameEngine).
+     * @param type PowerUpType to activate
+     * @param tier Tier level (0-4)
+     */
+    fun activateEffect(type: PowerUpType, tier: Int) {
+        val clampedTier = tier.coerceIn(0, 4)
+        when (type) {
+            PowerUpType.HEALTH -> return // Health is instant, handled separately
+            PowerUpType.SHIELD -> {
+                val duration = 10000L + clampedTier * 2000L
+                stackTimedEffect(type, clampedTier, duration)
+            }
+            PowerUpType.FIREPOWER -> {
+                val duration = 10000L + clampedTier * 2000L
+                stackTimedEffect(type, clampedTier, duration)
+            }
+            PowerUpType.MULTISHOT -> {
+                val duration = 8000L + clampedTier * 2000L
+                stackTimedEffect(type, clampedTier, duration)
+            }
+            PowerUpType.DOUBLE_REWARD -> {
+                val duration = 12000L + clampedTier * 2000L
+                stackTimedEffect(type, clampedTier, duration)
+            }
+        }
+    }
 }
 
 // Debug overlay metrics (only available in debug builds)
@@ -630,7 +667,8 @@ class DifficultyScaler(private val config: DifficultyConfig = DifficultyConfig()
  * Optimized to avoid per-frame allocations.
  */
 class EnemyBehaviorController {
-    private var currentState: EnemyState = EnemyState.IDLE
+    var currentState: EnemyState = EnemyState.IDLE
+        private set
     private var stateTimer: Float = 0f
     private var nextStateChange: Float = Random.nextFloat() * 3f + 2f  // 2-5 seconds
 

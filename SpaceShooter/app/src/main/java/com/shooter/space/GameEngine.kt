@@ -216,9 +216,47 @@ class GameEngine(
             is InputEvent.ShopEvent.Purchase -> {
                 handlePurchase(event.itemId)
             }
+            is InputEvent.ShopEvent.Close -> {
+                isShopOpen = false
+            }
+            is InputEvent.ShopEvent.Open -> {
+                isShopOpen = true
+            }
             else -> {} // Other events handled elsewhere
         }
         publishSnapshot()
+    }
+
+    /**
+     * Convenience method for handling player drag input.
+     * Called by UI layer when player drags on screen.
+     */
+    fun handlePlayerDrag(dx: Float, dy: Float) {
+        val newX = (player.x + dx).coerceIn(0f, screenWidth)
+        val newY = (player.y + dy).coerceIn(0f, screenHeight)
+
+        onInput(
+            InputEvent.Move(
+                dragAmount = Offset(dx, dy),
+                absolutePosition = Offset(newX, newY)
+            )
+        )
+    }
+
+    /**
+     * Convenience method for purchasing shop items.
+     * Called by UI layer when player clicks purchase button.
+     */
+    fun purchaseShopItem(item: ShopItem) {
+        onInput(InputEvent.ShopEvent.Purchase(item.id))
+    }
+
+    /**
+     * Convenience method for closing shop.
+     * Called by UI layer when player clicks close button.
+     */
+    fun closeShop() {
+        onInput(InputEvent.ShopEvent.Close)
     }
 
     /**
@@ -423,11 +461,12 @@ class GameEngine(
 
         powerUpSystem.worldPowerUps.add(
             WorldPowerUp(
+                id = System.currentTimeMillis(),
+                type = type,
                 x = (50f..screenWidth - 50f).random(),
                 y = (50f..screenHeight * 0.3f).random(),
-                type = type,
                 tier = tier,
-                timeAlive = 0f
+                alive = true
             )
         )
     }

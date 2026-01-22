@@ -423,9 +423,17 @@ class GameEngine(
 
     private fun updateBullets(dtMs: Long) {
         val speedScale = dtMs / 16f // Scale speed relative to 16ms baseline
-        bullets.removeAll { bullet ->
+
+        // Use reverse loop for in-place removal (avoid allocation)
+        var i = bullets.size - 1
+        while (i >= 0) {
+            val bullet = bullets[i]
             bullet.y -= bullet.speed * speedScale
-            bullet.y < 0
+
+            if (bullet.y < 0) {
+                bullets.removeAt(i)
+            }
+            i--
         }
     }
 
@@ -476,17 +484,20 @@ class GameEngine(
 
     private fun checkPowerUpCollisions() {
         val pickupRadius = 30f
-        powerUpSystem.worldPowerUps.removeAll { powerUp ->
+
+        // Use reverse loop for in-place removal (avoid allocation)
+        var i = powerUpSystem.worldPowerUps.size - 1
+        while (i >= 0) {
+            val powerUp = powerUpSystem.worldPowerUps[i]
             val dx = player.x - powerUp.x
             val dy = player.y - powerUp.y
             val distance = kotlin.math.sqrt(dx * dx + dy * dy)
 
             if (distance < pickupRadius) {
                 applyPowerUp(powerUp.type, powerUp.tier)
-                true
-            } else {
-                false
+                powerUpSystem.worldPowerUps.removeAt(i)
             }
+            i--
         }
     }
 
@@ -528,8 +539,14 @@ class GameEngine(
             enemy.y += enemy.speed * speedMultiplier * speedScale
         }
 
-        // Remove off-screen enemies
-        enemies.removeAll { it.y > screenHeight + it.size }
+        // Remove off-screen enemies (reverse loop for performance)
+        var i = enemies.size - 1
+        while (i >= 0) {
+            if (enemies[i].y > screenHeight + enemies[i].size) {
+                enemies.removeAt(i)
+            }
+            i--
+        }
     }
 
     private fun checkBulletEnemyCollisions() {

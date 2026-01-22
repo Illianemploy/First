@@ -1,0 +1,627 @@
+package com.shooter.space
+
+import android.content.Context
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.ImageBitmap
+import kotlin.math.ln
+import kotlin.math.min
+
+/**
+ * GameEngine owns all mutable game state and exposes immutable snapshots.
+ * UI layer observes `state.value` and sends `InputEvent` only.
+ *
+ * Core responsibilities:
+ * - Process frame updates via update(dtMs)
+ * - Handle input via onInput(event)
+ * - Publish snapshots to state.value
+ * - Maintain game rules, collision detection, spawning, scoring
+ */
+class GameEngine(
+    private val context: Context,
+    private val screenWidth: Float,
+    private val screenHeight: Float,
+    powerUpSprite: ImageBitmap?,
+    spaceCenterSprite: ImageBitmap?,
+    private val backgroundManager: ParallaxBackgroundManager
+) {
+    // === MUTABLE INTERNAL STATE (UI cannot access) ===
+    private var player = Player(screenWidth / 2, screenHeight - 150f)
+    private val enemies = mutableListOf<Enemy>()
+    private val bullets = mutableListOf<Bullet>()
+    private val stars = mutableListOf<Star>()
+    private var spaceCenter: SpaceCenter? = null
+
+    // Game metrics
+    private var score = 0
+    private var earnedCurrency = 0
+    private var currentMultiplier = 1.0
+    private var playerHealth = 3
+    private val maxPlayerHealth = 3
+    private var isAlive = true
+
+    // Timing
+    private var gameTime = 0f
+    private var gameStartTime = 0L
+    private var pausedTime = 0L // Accumulated ms spent in shop
+    private var survivedMilliseconds = 0L
+    private var lastUpdateTime = 0L
+
+    // Shop state
+    private var isShopOpen = false
+    private var shopIndex = 0
+    private var purchasesThisWindow = 0
+    private val maxPurchasesPerWindow = 3
+    private var playerInsideShop = false
+    private var shopExitTime = 0L
+    private var canAutoOpenShop = true
+    private var shopItems = emptyList<ShopItem>()
+
+    // Upgrades & risks
+    private var playerUpgrades = PlayerUpgrades()
+    private var activeRisk: RiskState? = null
+    private var permanentMultiplierBonus = 0.0
+    private var weaponStats = WeaponStats()
+
+    // Systems
+    private val difficultyScaler = DifficultyScaler()
+    private val powerUpSystem = PowerUpSystem()
+
+    // Cached sprites
+    private val powerUpSprite: ImageBitmap? = powerUpSprite
+    private val spaceCenterSprite: ImageBitmap? = spaceCenterSprite
+
+    // Frame tracking
+    private var lastFireTime = 0L
+    private var lastSpawnTime = 0L
+    private var lastPowerUpSpawnTime = 0L
+    private var lastDifficultyUpdate = 0L
+    private var cachedSpawnInterval = 1000L
+
+    // Shop constants
+    private val shopRespawnSeconds = 30
+
+    // === PUBLISHED STATE (Immutable snapshot) ===
+    val state = mutableStateOf(
+        GameState.initial(screenWidth, screenHeight, powerUpSprite, spaceCenterSprite)
+    )
+
+    init {
+        // Initialize stars
+        repeat(100) {
+            stars.add(
+                Star(
+                    x = (0..screenWidth.toInt()).random().toFloat(),
+                    y = (0..screenHeight.toInt()).random().toFloat(),
+                    size = (1f..3f).random(),
+                    speed = (2f..5f).random(),
+                    layer = (0..2).random()
+                )
+            )
+        }
+        publishSnapshot()
+    }
+
+    /**
+     * Main update loop - called every frame with delta time in milliseconds.
+     * Currently maintains 16ms fixed timestep for behavior compatibility.
+     *
+     * @param dtMs Delta time in milliseconds (will be real delta after Checkpoint 2)
+     */
+    fun update(dtMs: Long) {
+        if (!isAlive) return
+
+        val currentTime = System.currentTimeMillis()
+        if (gameStartTime == 0L) {
+            gameStartTime = currentTime
+            lastUpdateTime = currentTime
+        }
+
+        // Calculate survived time (excluding shop pauses)
+        survivedMilliseconds = (currentTime - gameStartTime) - pausedTime
+        gameTime = survivedMilliseconds / 1000f
+
+        // === SPACE CENTER & SHOP LOGIC ===
+        updateSpaceCenter(currentTime, dtMs)
+
+        // If shop is open, pause game updates but track paused time
+        if (isShopOpen) {
+            pausedTime += dtMs
+            powerUpSystem.update(0L) // Freeze power-up timers
+            publishSnapshot()
+            return
+        }
+
+        // === ACTIVE GAME UPDATES (only when shop closed) ===
+
+        // Update multiplier
+        currentMultiplier = calculateMultiplier(survivedMilliseconds) +
+                           playerUpgrades.scoreBoostPercent / 100.0 +
+                           permanentMultiplierBonus
+
+        // Update star parallax
+        updateStars()
+
+        // Apply player velocity decay
+        player.velocityX *= 0.85f
+        player.velocityY *= 0.85f
+
+        // Auto-fire bullets
+        updateWeaponFiring(currentTime)
+
+        // Update bullets
+        updateBullets()
+
+        // Update difficulty (every 500ms)
+        if (currentTime - lastDifficultyUpdate > 500) {
+            difficultyScaler.update(survivedMilliseconds, score)
+            cachedSpawnInterval = difficultyScaler.getSpawnInterval()
+            lastDifficultyUpdate = currentTime
+        }
+
+        // Spawn enemies
+        if (currentTime - lastSpawnTime > cachedSpawnInterval) {
+            spawnEnemy()
+            lastSpawnTime = currentTime
+        }
+
+        // Spawn power-ups (test: every 10s)
+        if (currentTime - lastPowerUpSpawnTime > 10000) {
+            spawnPowerUp()
+            lastPowerUpSpawnTime = currentTime
+        }
+
+        // Update power-up system
+        powerUpSystem.update(dtMs)
+
+        // Check power-up pickups
+        checkPowerUpCollisions()
+
+        // Update enemies
+        updateEnemies()
+
+        // Check bullet-enemy collisions
+        checkBulletEnemyCollisions()
+
+        // Check player-enemy collisions
+        checkPlayerEnemyCollisions()
+
+        // Award score and currency based on survival time
+        awardScoreAndCurrency(currentTime)
+
+        // Update active risk challenges
+        updateRiskChallenges(currentTime)
+
+        // Update background
+        backgroundManager.update(dtMs / 1000f)
+
+        lastUpdateTime = currentTime
+        publishSnapshot()
+    }
+
+    /**
+     * Handle input events from UI layer.
+     */
+    fun onInput(event: InputEvent) {
+        when (event) {
+            is InputEvent.Move -> {
+                player.x = event.absolutePosition.x.coerceIn(0f, screenWidth)
+                player.y = event.absolutePosition.y.coerceIn(0f, screenHeight)
+                player.velocityX = event.dragAmount.x
+                player.velocityY = event.dragAmount.y
+            }
+            is InputEvent.PauseToggle -> {
+                // Not used - pause handled automatically by shop
+            }
+            is InputEvent.ShopEvent.Purchase -> {
+                handlePurchase(event.itemId)
+            }
+            else -> {} // Other events handled elsewhere
+        }
+        publishSnapshot()
+    }
+
+    /**
+     * Restart the game with fresh state.
+     */
+    fun restart() {
+        player = Player(screenWidth / 2, screenHeight - 150f)
+        enemies.clear()
+        bullets.clear()
+        stars.clear()
+        spaceCenter = null
+
+        score = 0
+        earnedCurrency = 0
+        currentMultiplier = 1.0
+        playerHealth = maxPlayerHealth
+        isAlive = true
+
+        gameTime = 0f
+        gameStartTime = 0L
+        pausedTime = 0L
+        survivedMilliseconds = 0L
+
+        isShopOpen = false
+        shopIndex = 0
+        purchasesThisWindow = 0
+        playerInsideShop = false
+        shopExitTime = 0L
+        canAutoOpenShop = true
+        shopItems = emptyList()
+
+        playerUpgrades = PlayerUpgrades()
+        activeRisk = null
+        permanentMultiplierBonus = 0.0
+        weaponStats = WeaponStats()
+
+        difficultyScaler.reset()
+        powerUpSystem.reset()
+
+        // Reinitialize stars
+        repeat(100) {
+            stars.add(
+                Star(
+                    x = (0..screenWidth.toInt()).random().toFloat(),
+                    y = (0..screenHeight.toInt()).random().toFloat(),
+                    size = (1f..3f).random(),
+                    speed = (2f..5f).random(),
+                    layer = (0..2).random()
+                )
+            )
+        }
+
+        publishSnapshot()
+    }
+
+    // === PRIVATE UPDATE METHODS ===
+
+    private fun updateSpaceCenter(currentTime: Long, dtMs: Long) {
+        // Spawn space center if needed (30s cooldown after exit)
+        if (spaceCenter == null && (shopExitTime == 0L || currentTime - shopExitTime > shopRespawnSeconds * 1000)) {
+            spaceCenter = SpaceCenter(
+                x = (screenWidth * 0.3f..screenWidth * 0.7f).random(),
+                y = -200f,
+                size = 400f,
+                rotation = 0f,
+                timeAlive = 0f,
+                speed = 1.5f,
+                isActive = true
+            )
+        }
+
+        // Update space center position (only when shop closed)
+        spaceCenter?.let { center ->
+            if (!isShopOpen) {
+                center.y += center.speed
+                center.rotation += 0.5f
+                center.timeAlive += dtMs / 1000f
+
+                // Remove if off-screen
+                if (center.y > screenHeight + center.size) {
+                    spaceCenter = null
+                }
+            }
+        }
+
+        // Check collision with player to auto-open/close shop
+        spaceCenter?.let { center ->
+            val collisionRadius = center.size * 0.325f
+            val dx = player.x - center.x
+            val dy = player.y - center.y
+            val distance = kotlin.math.sqrt(dx * dx + dy * dy)
+
+            val wasInside = playerInsideShop
+            playerInsideShop = distance < collisionRadius
+
+            // Auto-open shop when entering
+            if (playerInsideShop && !wasInside && canAutoOpenShop) {
+                isShopOpen = true
+                shopIndex++
+                purchasesThisWindow = 0
+                shopItems = generateShopItems(shopIndex, survivedMilliseconds / 1000)
+                canAutoOpenShop = false
+            }
+
+            // Auto-close shop when exiting
+            if (!playerInsideShop && wasInside) {
+                isShopOpen = false
+                shopExitTime = currentTime
+                spaceCenter = null
+                canAutoOpenShop = true
+            }
+        }
+    }
+
+    private fun updateStars() {
+        for (star in stars) {
+            star.y += star.speed
+            if (star.y > screenHeight) {
+                star.y = 0f
+                star.x = (0..screenWidth.toInt()).random().toFloat()
+            }
+        }
+    }
+
+    private fun updateWeaponFiring(currentTime: Long) {
+        val fireRateModifier = 1.0 - playerUpgrades.fireRateLevel * 0.2
+        val effectiveFireRate = (weaponStats.baseFireRate * fireRateModifier).toLong()
+
+        if (currentTime - lastFireTime > effectiveFireRate) {
+            val bulletSpeed = 20f * (1f + playerUpgrades.bulletSpeedLevel * 0.3f)
+
+            // Get active modifiers from power-ups
+            val modifiers = mutableListOf(WeaponModifier())
+            powerUpSystem.activeEffects[PowerUpType.MULTISHOT]?.let {
+                modifiers.add(WeaponModifier(projectileCount = 3, spreadAngle = 15f))
+            }
+            powerUpSystem.activeEffects[PowerUpType.FIREPOWER]?.let {
+                modifiers.add(WeaponModifier(isPiercing = true))
+            }
+
+            // Fire bullets based on modifiers
+            val projectileCount = modifiers.maxOfOrNull { it.projectileCount } ?: 1
+            val spreadAngle = modifiers.maxOfOrNull { it.spreadAngle } ?: 0f
+
+            for (i in 0 until projectileCount) {
+                val offsetX = if (projectileCount > 1) {
+                    (i - projectileCount / 2) * 20f
+                } else 0f
+
+                bullets.add(
+                    Bullet(
+                        x = player.x + offsetX,
+                        y = player.y - player.size / 2,
+                        speed = bulletSpeed
+                    )
+                )
+            }
+
+            lastFireTime = currentTime
+        }
+    }
+
+    private fun updateBullets() {
+        bullets.removeAll { bullet ->
+            bullet.y -= bullet.speed
+            bullet.y < 0
+        }
+    }
+
+    private fun spawnEnemy() {
+        val sizeTier = randomSizeTier()
+        val size = when (sizeTier) {
+            SizeTier.SMALL -> (40f..60f).random()
+            SizeTier.MEDIUM -> (70f..90f).random()
+            SizeTier.LARGE -> (100f..130f).random()
+            SizeTier.ELITE -> (130f..160f).random()
+        }
+
+        val baseHealth = difficultyScaler.getEnemyHealth()
+        val health = if (sizeTier == SizeTier.ELITE) baseHealth + 1 else baseHealth
+
+        val enemy = Enemy(
+            x = (size..screenWidth - size).random(),
+            y = -size,
+            size = size,
+            speed = 3f * difficultyScaler.getSpeedMultiplier(),
+            type = (0..4).random(),
+            timeAlive = 0f,
+            rotation = 0f,
+            health = health,
+            sizeTier = sizeTier,
+            behaviorController = EnemyBehaviorController(),
+            visualStyle = randomVisualStyle()
+        )
+
+        enemies.add(enemy)
+    }
+
+    private fun spawnPowerUp() {
+        val type = PowerUpType.entries.random()
+        val tier = (0..4).random()
+
+        powerUpSystem.worldPowerUps.add(
+            WorldPowerUp(
+                x = (50f..screenWidth - 50f).random(),
+                y = (50f..screenHeight * 0.3f).random(),
+                type = type,
+                tier = tier,
+                timeAlive = 0f
+            )
+        )
+    }
+
+    private fun checkPowerUpCollisions() {
+        val pickupRadius = 30f
+        powerUpSystem.worldPowerUps.removeAll { powerUp ->
+            val dx = player.x - powerUp.x
+            val dy = player.y - powerUp.y
+            val distance = kotlin.math.sqrt(dx * dx + dy * dy)
+
+            if (distance < pickupRadius) {
+                applyPowerUp(powerUp.type, powerUp.tier)
+                true
+            } else {
+                false
+            }
+        }
+    }
+
+    private fun applyPowerUp(type: PowerUpType, tier: Int) {
+        when (type) {
+            PowerUpType.HEALTH -> {
+                playerHealth = min(playerHealth + 1, maxPlayerHealth)
+            }
+            else -> {
+                powerUpSystem.activateEffect(type, tier)
+            }
+        }
+    }
+
+    private fun updateEnemies() {
+        for (enemy in enemies) {
+            enemy.timeAlive += 0.016f // Fixed 16ms for now
+            enemy.rotation += 1f
+
+            // Update behavior controller
+            enemy.behaviorController?.update(
+                enemy = enemy,
+                player = player,
+                deltaTime = 0.016f
+            )
+
+            // Apply behavior movement
+            val state = enemy.behaviorController?.currentState ?: EnemyState.IDLE
+            val speedMultiplier = when (state) {
+                EnemyState.APPROACH -> 0.5f
+                EnemyState.STRAFE -> 0.7f
+                EnemyState.FLEE -> 0.3f
+                EnemyState.IDLE -> 1.0f
+            }
+
+            enemy.y += enemy.speed * speedMultiplier
+        }
+
+        // Remove off-screen enemies
+        enemies.removeAll { it.y > screenHeight + it.size }
+    }
+
+    private fun checkBulletEnemyCollisions() {
+        val bulletsToRemove = mutableSetOf<Bullet>()
+        val enemiesToRemove = mutableSetOf<Enemy>()
+
+        for (bullet in bullets) {
+            for (enemy in enemies) {
+                val dx = bullet.x - enemy.x
+                val dy = bullet.y - enemy.y
+                val distance = kotlin.math.sqrt(dx * dx + dy * dy)
+
+                if (distance < enemy.size / 2) {
+                    enemy.health -= 1
+                    if (enemy.health <= 0) {
+                        enemiesToRemove.add(enemy)
+                        score += 10
+                    }
+                    bulletsToRemove.add(bullet)
+                    break
+                }
+            }
+        }
+
+        bullets.removeAll(bulletsToRemove)
+        enemies.removeAll(enemiesToRemove)
+    }
+
+    private fun checkPlayerEnemyCollisions() {
+        for (enemy in enemies) {
+            val dx = player.x - enemy.x
+            val dy = player.y - enemy.y
+            val distance = kotlin.math.sqrt(dx * dx + dy * dy)
+
+            if (distance < (player.size + enemy.size) / 2) {
+                playerHealth -= 1
+                enemies.remove(enemy)
+
+                if (playerHealth <= 0) {
+                    isAlive = false
+                }
+                break
+            }
+        }
+    }
+
+    private fun awardScoreAndCurrency(currentTime: Long) {
+        // Score: 1 point per 100ms
+        val survivalScore = (survivedMilliseconds / 100).toInt()
+        score = survivalScore
+
+        // Currency: 1 $M per second
+        val baseCurrency = survivedMilliseconds / 1000
+        earnedCurrency = (baseCurrency * currentMultiplier).toInt()
+    }
+
+    private fun updateRiskChallenges(currentTime: Long) {
+        activeRisk?.let { risk ->
+            val remaining = risk.timeRemaining - 16 // Fixed 16ms
+            if (remaining <= 0) {
+                risk.onSuccess()
+                activeRisk = null
+            } else {
+                activeRisk = risk.copy(timeRemaining = remaining)
+            }
+        }
+    }
+
+    private fun handlePurchase(itemId: String) {
+        if (purchasesThisWindow >= maxPurchasesPerWindow) return
+
+        val item = shopItems.firstOrNull { it.id == itemId } ?: return
+
+        // Calculate actual cost with scaling
+        val debtMultiplier = if (playerUpgrades.debtPenaltyShopsRemaining > 0) 1.5 else 1.0
+        val actualCost = calculateItemCost(item.baseCost, shopIndex, debtMultiplier)
+
+        if (earnedCurrency >= actualCost) {
+            earnedCurrency -= actualCost
+            purchasesThisWindow++
+            applyShopItem(item)
+
+            // Regenerate shop items
+            shopItems = generateShopItems(shopIndex, survivedMilliseconds / 1000)
+        }
+    }
+
+    private fun applyShopItem(item: ShopItem) {
+        when (item.type) {
+            ShopItemType.FIRE_RATE -> playerUpgrades.fireRateLevel++
+            ShopItemType.BULLET_SPEED -> playerUpgrades.bulletSpeedLevel++
+            ShopItemType.SCORE_BOOST -> playerUpgrades.scoreBoostPercent += 15.0
+            ShopItemType.CURRENCY_BOOST -> playerUpgrades.currencyBoostPercent += 15.0
+            else -> {} // Other types handled separately
+        }
+    }
+
+    private fun calculateMultiplier(survivedMs: Long, scalingFactor: Double = 0.6, maxMultiplier: Double = 10.0): Double {
+        val timeInSeconds = survivedMs / 1000.0
+        val multiplier = 1.0 + scalingFactor * ln(1.0 + timeInSeconds)
+        return min(multiplier, maxMultiplier)
+    }
+
+    /**
+     * Publish immutable snapshot to UI layer.
+     */
+    private fun publishSnapshot() {
+        state.value = GameState(
+            player = player.copy(),
+            enemies = enemies.map { it.copy() },
+            bullets = bullets.map { it.copy() },
+            stars = stars.map { it.copy() },
+            spaceCenter = spaceCenter?.copy(),
+            powerUps = powerUpSystem.worldPowerUps.map { it.copy() },
+            score = score,
+            earnedCurrency = earnedCurrency,
+            currentMultiplier = currentMultiplier,
+            playerHealth = playerHealth,
+            maxPlayerHealth = maxPlayerHealth,
+            isAlive = isAlive,
+            gameTime = gameTime,
+            survivedMilliseconds = survivedMilliseconds,
+            isShopOpen = isShopOpen,
+            shopIndex = shopIndex,
+            purchasesThisWindow = purchasesThisWindow,
+            maxPurchasesPerWindow = maxPurchasesPerWindow,
+            playerInsideShop = playerInsideShop,
+            shopItems = shopItems,
+            playerUpgrades = playerUpgrades.copy(),
+            activeRisk = activeRisk?.copy(),
+            permanentMultiplierBonus = permanentMultiplierBonus,
+            weaponStats = weaponStats.copy(),
+            activePowerUpEffects = powerUpSystem.activeEffects.toMap(),
+            difficultyLevel = difficultyScaler.getCurrentLevel(),
+            powerUpSprite = powerUpSprite,
+            spaceCenterSprite = spaceCenterSprite,
+            backgroundScrollOffset = 0f // TODO: Get from backgroundManager
+        )
+    }
+}

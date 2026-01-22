@@ -44,7 +44,7 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 // Game entities
-data class Star(val x: Float, val y: Float, val size: Float, val speed: Float, val layer: Int = 0)
+data class Star(var x: Float, var y: Float, val size: Float, val speed: Float, val layer: Int = 0)
 
 // Enemy size tiers for visual and hitbox scaling
 enum class SizeTier {
@@ -615,6 +615,13 @@ class DifficultyScaler(private val config: DifficultyConfig = DifficultyConfig()
      * Get current difficulty level (useful for UI or debugging).
      */
     fun getCurrentLevel(): Int = currentLevel
+
+    /**
+     * Reset difficulty to initial state.
+     */
+    fun reset() {
+        currentLevel = 0
+    }
 }
 
 /**
@@ -797,16 +804,10 @@ class ParallaxBackgroundManager(
     private val scrollSpeed: Float = 0.8f // pixels per frame (~48 px/sec at 60 FPS)
 
     /**
-     * Loads a background bitmap from resources by name.
+     * Loads a background bitmap from resources by ID.
      * Scales the bitmap to fit screen dimensions while maintaining aspect ratio.
      */
-    private fun loadBackground(resourceName: String): ImageBitmap {
-        val resourceId = context.resources.getIdentifier(
-            resourceName,
-            "drawable",
-            context.packageName
-        )
-
+    private fun loadBackground(resourceId: Int): ImageBitmap {
         // Load with efficient options
         val options = BitmapFactory.Options().apply {
             inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888 // Support transparency
@@ -837,10 +838,10 @@ class ParallaxBackgroundManager(
      */
     fun initialize() {
         // Load static foreground layer (planet surface)
-        foregroundLayer = loadBackground("parallax_background_001")
+        foregroundLayer = loadBackground(R.drawable.parallax_background_001)
 
         // Load scrolling background layer (stars) with two instances for seamless looping
-        val starfieldBitmap = loadBackground("parallax_background_002")
+        val starfieldBitmap = loadBackground(R.drawable.parallax_background_002)
         scrollingLayer = ScrollingLayer(
             bitmap = starfieldBitmap,
             y1 = 0f,              // First instance at screen top
@@ -1005,7 +1006,7 @@ private fun calculateMultiplier(
  * @param debtPenalty Additional cost multiplier from debt effects
  * @return Scaled cost
  */
-private fun calculateItemCost(baseCost: Int, shopIndex: Int, debtPenalty: Double = 1.0): Int {
+internal fun calculateItemCost(baseCost: Int, shopIndex: Int, debtPenalty: Double = 1.0): Int {
     val scaledCost = baseCost * (1.0 + shopIndex.toDouble().pow(0.6))
     return (scaledCost * debtPenalty).toInt()
 }
@@ -1019,7 +1020,7 @@ private fun calculateItemCost(baseCost: Int, shopIndex: Int, debtPenalty: Double
  * @param survivedSeconds Total survival time in seconds
  * @return List of available shop items
  */
-private fun generateShopItems(shopIndex: Int, survivedSeconds: Long): List<ShopItem> {
+internal fun generateShopItems(shopIndex: Int, survivedSeconds: Long): List<ShopItem> {
     val items = mutableListOf<ShopItem>()
     val allowHighRisk = survivedSeconds >= 60
 
@@ -1241,18 +1242,9 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
         }
     }
 
-    // Load power-up sprite sheet (Bonuses-0001.png - 5x5 grid)
+    // Load power-up sprite sheet (bonuses_0001.png - 5x5 grid)
     val powerUpSprite = remember {
-        val resourceId = context.resources.getIdentifier(
-            "bonuses_0001",  // Android resource names must be lowercase with underscores
-            "drawable",
-            context.packageName
-        )
-        if (resourceId != 0) {
-            BitmapFactory.decodeResource(context.resources, resourceId).asImageBitmap()
-        } else {
-            null  // Graceful fallback if sprite not found
-        }
+        BitmapFactory.decodeResource(context.resources, R.drawable.bonuses_0001).asImageBitmap()
     }
 
     // Load space center sprite
@@ -2384,21 +2376,8 @@ class EnemyRenderer(private val context: Context) {
      * Call this once during initialization.
      */
     fun loadSprites() {
-        evilShipSprite = loadSprite("evil_enemy_spaceship_001")
-    }
-
-    private fun loadSprite(resourceName: String): ImageBitmap? {
-        return try {
-            val resourceId = context.resources.getIdentifier(
-                resourceName,
-                "drawable",
-                context.packageName
-            )
-            if (resourceId != 0) {
-                BitmapFactory.decodeResource(context.resources, resourceId).asImageBitmap()
-            } else {
-                null
-            }
+        evilShipSprite = try {
+            BitmapFactory.decodeResource(context.resources, R.drawable.evil_enemy_spaceship_001).asImageBitmap()
         } catch (e: Exception) {
             null
         }

@@ -1,6 +1,7 @@
 package com.shooter.space
 
 import androidx.compose.ui.graphics.ImageBitmap
+import kotlin.random.Random
 
 /**
  * Immutable snapshot of all game state at a point in time.
@@ -57,6 +58,12 @@ data class GameState(
 ) {
     companion object {
         /**
+         * Helper to generate random float in range [min, max]
+         */
+        private fun randFloat(min: Float, max: Float): Float =
+            Random.nextFloat() * (max - min) + min
+
+        /**
          * Factory method for initial game state.
          * Called once at game start or restart.
          */
@@ -72,11 +79,11 @@ data class GameState(
                 bullets = emptyList(),
                 stars = List(100) {
                     Star(
-                        x = (0..screenWidth.toInt()).random().toFloat(),
-                        y = (0..screenHeight.toInt()).random().toFloat(),
-                        size = (1f..3f).random(),
-                        speed = (2f..5f).random(),
-                        layer = (0..2).random()
+                        x = Random.nextInt(0, screenWidth.toInt() + 1).toFloat(),
+                        y = Random.nextInt(0, screenHeight.toInt() + 1).toFloat(),
+                        size = randFloat(1f, 3f),
+                        speed = randFloat(2f, 5f),
+                        layer = Random.nextInt(0, 3)
                     )
                 },
                 spaceCenter = null,

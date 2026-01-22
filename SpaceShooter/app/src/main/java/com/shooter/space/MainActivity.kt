@@ -44,7 +44,7 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 // Game entities
-data class Star(val x: Float, val y: Float, val size: Float, val speed: Float, val layer: Int = 0)
+data class Star(var x: Float, var y: Float, val size: Float, val speed: Float, val layer: Int = 0)
 
 // Enemy size tiers for visual and hitbox scaling
 enum class SizeTier {
@@ -615,6 +615,13 @@ class DifficultyScaler(private val config: DifficultyConfig = DifficultyConfig()
      * Get current difficulty level (useful for UI or debugging).
      */
     fun getCurrentLevel(): Int = currentLevel
+
+    /**
+     * Reset difficulty to initial state.
+     */
+    fun reset() {
+        currentLevel = 0
+    }
 }
 
 /**
@@ -797,16 +804,10 @@ class ParallaxBackgroundManager(
     private val scrollSpeed: Float = 0.8f // pixels per frame (~48 px/sec at 60 FPS)
 
     /**
-     * Loads a background bitmap from resources by name.
+     * Loads a background bitmap from resources by ID.
      * Scales the bitmap to fit screen dimensions while maintaining aspect ratio.
      */
-    private fun loadBackground(resourceName: String): ImageBitmap {
-        val resourceId = context.resources.getIdentifier(
-            resourceName,
-            "drawable",
-            context.packageName
-        )
-
+    private fun loadBackground(resourceId: Int): ImageBitmap {
         // Load with efficient options
         val options = BitmapFactory.Options().apply {
             inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888 // Support transparency
@@ -837,10 +838,10 @@ class ParallaxBackgroundManager(
      */
     fun initialize() {
         // Load static foreground layer (planet surface)
-        foregroundLayer = loadBackground("parallax_background_001")
+        foregroundLayer = loadBackground(R.drawable.parallax_background_001)
 
         // Load scrolling background layer (stars) with two instances for seamless looping
-        val starfieldBitmap = loadBackground("parallax_background_002")
+        val starfieldBitmap = loadBackground(R.drawable.parallax_background_002)
         scrollingLayer = ScrollingLayer(
             bitmap = starfieldBitmap,
             y1 = 0f,              // First instance at screen top
@@ -1005,7 +1006,7 @@ private fun calculateMultiplier(
  * @param debtPenalty Additional cost multiplier from debt effects
  * @return Scaled cost
  */
-private fun calculateItemCost(baseCost: Int, shopIndex: Int, debtPenalty: Double = 1.0): Int {
+internal fun calculateItemCost(baseCost: Int, shopIndex: Int, debtPenalty: Double = 1.0): Int {
     val scaledCost = baseCost * (1.0 + shopIndex.toDouble().pow(0.6))
     return (scaledCost * debtPenalty).toInt()
 }
@@ -1019,7 +1020,7 @@ private fun calculateItemCost(baseCost: Int, shopIndex: Int, debtPenalty: Double
  * @param survivedSeconds Total survival time in seconds
  * @return List of available shop items
  */
-private fun generateShopItems(shopIndex: Int, survivedSeconds: Long): List<ShopItem> {
+internal fun generateShopItems(shopIndex: Int, survivedSeconds: Long): List<ShopItem> {
     val items = mutableListOf<ShopItem>()
     val allowHighRisk = survivedSeconds >= 60
 
@@ -1241,18 +1242,9 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
         }
     }
 
-    // Load power-up sprite sheet (Bonuses-0001.png - 5x5 grid)
+    // Load power-up sprite sheet (bonuses_0001.png - 5x5 grid)
     val powerUpSprite = remember {
-        val resourceId = context.resources.getIdentifier(
-            "bonuses_0001",  // Android resource names must be lowercase with underscores
-            "drawable",
-            context.packageName
-        )
-        if (resourceId != 0) {
-            BitmapFactory.decodeResource(context.resources, resourceId).asImageBitmap()
-        } else {
-            null  // Graceful fallback if sprite not found
-        }
+        BitmapFactory.decodeResource(context.resources, R.drawable.bonuses_0001).asImageBitmap()
     }
 
     // Load space center sprite
@@ -1262,120 +1254,53 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
 
     // Initialize parallax background manager
     val backgroundManager = remember {
-        ParallaxBackgroundManager(context, screenWidth, screenHeight)
+        ParallaxBackgroundManager(context, screenWidth, screenHeight).apply {
+            initialize()
+        }
     }
 
-    var player by remember { mutableStateOf(Player(screenWidth / 2, screenHeight - 150f)) }
-    var enemies by remember { mutableStateOf<List<Enemy>>(emptyList()) }
-    var bullets by remember { mutableStateOf<List<Bullet>>(emptyList()) }
-    var stars by remember { mutableStateOf<List<Star>>(emptyList()) }
+    // Initialize GameEngine (owns all game state and logic)
+    val gameEngine = remember {
+        GameEngine(
+            context = context,
+            screenWidth = screenWidth,
+            screenHeight = screenHeight,
+            powerUpSprite = powerUpSprite,
+            spaceCenterSprite = spaceCenterSprite,
+            backgroundManager = backgroundManager
+        )
+    }
 
-    // Interactive objects
-    var spaceCenter by remember { mutableStateOf<SpaceCenter?>(null) }
-    var playerInsideShop by remember { mutableStateOf(false) }
-    var shopExitTime by remember { mutableLongStateOf(0L) }
-    var canAutoOpenShop by remember { mutableStateOf(true) }  // Debounce flag
+    // Observe game state for rendering
+    val gameState by gameEngine.state
 
-    // Game state
-    var score by remember { mutableIntStateOf(0) }
-    var earnedCurrency by remember { mutableIntStateOf(0) }
-    var currentMultiplier by remember { mutableDoubleStateOf(1.0) }
-    var isAlive by remember { mutableStateOf(true) }
-    var gameTime by remember { mutableFloatStateOf(0f) }
-
-    // Shop state
-    val shopRespawnSeconds = 30  // Time after exiting shop before next spawn
-    var shopIndex by remember { mutableIntStateOf(0) }
-    var isShopOpen by remember { mutableStateOf(false) }
-    var purchasesThisWindow by remember { mutableIntStateOf(0) }
-    val maxPurchasesPerWindow = 3
-
-    // Player upgrades
-    var playerUpgrades by remember { mutableStateOf(PlayerUpgrades()) }
-    var activeRisk by remember { mutableStateOf<RiskState?>(null) }
-    var permanentMultiplierBonus by remember { mutableDoubleStateOf(0.0) }
-
-    // Core game systems
-    val difficultyScaler = remember { DifficultyScaler() }
-    var weaponStats by remember { mutableStateOf(WeaponStats()) }
-    val powerUpSystem = remember { PowerUpSystem() }
-
-    // Track enemy health for persistence across hits
-    val enemyHealthMap = remember { mutableMapOf<Enemy, Int>() }
-
-    // Player health system (needed for power-ups)
-    var playerHealth by remember { mutableIntStateOf(3) }
-    val maxPlayerHealth = 3
-
-    // Debug overlay state (only enabled in debug builds)
+    // Debug overlay state (UI-only, not part of game state)
     var debugOverlayEnabled by remember { mutableStateOf(false) }
     var debugMetrics by remember { mutableStateOf(DebugMetrics()) }
     var debugTapCount by remember { mutableIntStateOf(0) }
     var lastDebugTap by remember { mutableLongStateOf(0L) }
 
-    // Initialize parallax background system and other visual effects
-    LaunchedEffect(Unit) {
-        // Initialize parallax background system (2 layers: scrolling stars + static planet)
-        backgroundManager.initialize()
-
-        stars = List(100) {
-            val layer = Random.nextInt(3) // 0 = far, 1 = mid, 2 = near
-            Star(
-                x = Random.nextFloat() * screenWidth,
-                y = Random.nextFloat() * screenHeight,
-                size = when (layer) {
-                    0 -> Random.nextFloat() * 1.5f + 0.5f  // Small, far stars
-                    1 -> Random.nextFloat() * 2f + 1f      // Medium stars
-                    else -> Random.nextFloat() * 2.5f + 1.5f // Large, near stars
-                },
-                speed = when (layer) {
-                    0 -> Random.nextFloat() * 1f + 0.5f    // Slow
-                    1 -> Random.nextFloat() * 2f + 1.5f    // Medium
-                    else -> Random.nextFloat() * 3f + 2.5f // Fast
-                },
-                layer = layer
-            )
-        }
-    }
-
-    // Game loop
-    LaunchedEffect(isAlive) {
-        val gameStartTime = System.currentTimeMillis()
-        var lastSpawn = 0L
-        var lastBulletFire = 0L
-        var lastScoreUpdate = gameStartTime
-        var lastCurrencyAward = gameStartTime
-        var lastPowerUpSpawn = gameStartTime  // Track power-up spawning
-        var pausedTime = 0L // Track time spent in shop
-
-        // Performance optimization: tick rate separation
-        var lastDifficultyUpdate = 0L  // Update difficulty every 500ms
-        var cachedSpawnInterval = 1000L
-        var cachedSpeedMultiplier = 1.0f
-        var cachedEnemyHealth = 1
-
-        // Debug metrics tracking (250ms update interval to avoid per-frame overhead)
-        var lastDebugUpdate = 0L
+    // Game loop - measures real delta time for frame-independent movement
+    LaunchedEffect(gameState.isAlive) {
         val frameTimes = mutableListOf<Long>()
-        var lastFrameTime = System.currentTimeMillis()
+        var lastUpdateTime = System.currentTimeMillis()
+        var lastDebugUpdate = 0L
 
-        while (isActive && isAlive) {
-            delay(16) // ~60 FPS
+        while (isActive && gameState.isAlive) {
+            delay(16) // Target ~60 FPS, but actual delta may vary
 
             val currentTime = System.currentTimeMillis()
-            val survivedMilliseconds = currentTime - gameStartTime - pausedTime
+            val dtMs = (currentTime - lastUpdateTime).coerceIn(0L, 50L) // Clamp to 50ms max (prevent spiral of death)
+            lastUpdateTime = currentTime
 
             // Track frame time for debug overlay (only if debug is enabled)
             if (BuildConfig.DEBUG && debugOverlayEnabled) {
-                val frameTime = currentTime - lastFrameTime
-                frameTimes.add(frameTime)
+                frameTimes.add(dtMs)
 
                 // Keep only last 60 frames (1 second at 60 FPS)
                 if (frameTimes.size > 60) {
                     frameTimes.removeAt(0)
                 }
-
-                lastFrameTime = currentTime
 
                 // Update debug metrics every 250ms
                 if (currentTime - lastDebugUpdate > 250) {
@@ -1383,417 +1308,26 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                         fps = if (frameTimes.isNotEmpty()) (1000f / frameTimes.average().toFloat()).toInt() else 0,
                         avgFrameTime = frameTimes.average().toFloat(),
                         worstFrameTime = frameTimes.maxOrNull()?.toFloat() ?: 0f,
-                        enemyCount = enemies.size,
-                        bulletCount = bullets.size,
-                        spawnInterval = cachedSpawnInterval,
-                        speedMultiplier = cachedSpeedMultiplier,
-                        enemyHealth = cachedEnemyHealth,
-                        score = score,
-                        currency = earnedCurrency,
-                        difficultyLevel = difficultyScaler.getCurrentLevel()
+                        enemyCount = gameState.enemies.size,
+                        bulletCount = gameState.bullets.size,
+                        spawnInterval = 0L,
+                        speedMultiplier = 0f,
+                        enemyHealth = 0,
+                        score = gameState.score,
+                        currency = gameState.earnedCurrency,
+                        difficultyLevel = gameState.difficultyLevel
                     )
                     lastDebugUpdate = currentTime
                 }
             }
 
-            // Handle space center updates separately (needed even when shop is open)
-            // Space Center (floating shop) spawning and update logic
-            if (!isShopOpen) {
-                // Only update space center position when shop is CLOSED
-                spaceCenter?.let { center ->
-                    val updatedCenter = center.copy(
-                        timeAlive = center.timeAlive + 0.016f,
-                        y = center.y + center.speed,  // Float downward
-                        x = center.x + sin(center.timeAlive * 0.5f) * 0.3f,  // Gentle horizontal sway
-                        rotation = sin(center.timeAlive * 0.3f) * 2f  // Subtle rotation (±2°)
-                    )
-
-                    // If space center is off-screen (below), remove it
-                    if (updatedCenter.y > screenHeight + 300f) {
-                        spaceCenter = null
-                    } else {
-                        spaceCenter = updatedCenter
-                    }
-                }
-
-                // Spawn logic (only when shop is closed and no space center exists)
-                if (spaceCenter == null) {
-                    val timeSinceExit = if (shopExitTime == 0L) {
-                        // First spawn - immediate
-                        999L
-                    } else {
-                        (currentTime - shopExitTime) / 1000
-                    }
-
-                    if (timeSinceExit >= shopRespawnSeconds) {
-                        // Spawn new space center at top of screen
-                        spaceCenter = SpaceCenter(
-                            x = screenWidth / 2,
-                            y = -200f,  // Start above screen
-                            rotation = 0f,
-                            timeAlive = 0f
-                        )
-                        shopIndex++
-                        purchasesThisWindow = 0
-
-                        // Decrement debt penalty counter
-                        if (playerUpgrades.debtPenaltyShopsRemaining > 0) {
-                            playerUpgrades = playerUpgrades.copy(
-                                debtPenaltyShopsRemaining = playerUpgrades.debtPenaltyShopsRemaining - 1
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Check player collision with space center (even when shop is open to detect exit)
-            spaceCenter?.let { center ->
-                val dx = player.x - center.x
-                val dy = player.y - center.y
-                val distance = kotlin.math.sqrt(dx * dx + dy * dy)
-                val interactionRadius = center.size * 0.325f  // 65% of size radius
-
-                val wasInsideShop = playerInsideShop
-                playerInsideShop = distance < interactionRadius
-
-                // Detect when player exits the interaction zone
-                if (!playerInsideShop && wasInsideShop) {
-                    // Player has left the zone - allow future shop entries
-                    canAutoOpenShop = true
-
-                    // Auto-close shop if it's open when player exits zone
-                    if (isShopOpen) {
-                        isShopOpen = false
-                        shopExitTime = currentTime
-                    }
-                }
-
-                // Auto-open shop only when entering zone for the first time (debounce)
-                if (playerInsideShop && !isShopOpen && canAutoOpenShop) {
-                    isShopOpen = true
-                    canAutoOpenShop = false  // Prevent reopening until player exits zone
-                }
-            }
-
-            // Skip all game updates when shop is open (pause the game)
-            if (isShopOpen) {
-                pausedTime += 16
-                powerUpSystem.update(0)  // Pause-safe: 0ms delta
-                continue
-            }
-
-            gameTime += 0.016f
-
-            // Update power-up system (only when running)
-            powerUpSystem.update(16L)  // 16ms delta at 60 FPS
-
-            // Update parallax background (only the scrolling starfield layer moves)
-            backgroundManager.update(0.016f)
-
-            // Calculate time-based multiplier for rewards
-            // Include permanent bonus from survival challenges
-            val baseScalingFactor = 0.6 + permanentMultiplierBonus
-            currentMultiplier = calculateMultiplier(survivedMilliseconds, baseScalingFactor)
-
-            // Apply player upgrades to multiplier
-            val upgradeMultiplier = 1.0 + playerUpgrades.scoreBoostPercent + playerUpgrades.currencyBoostPercent
-            currentMultiplier *= upgradeMultiplier
-
-            // Update stars with parallax layers
-            stars = stars.map { star ->
-                val layerSpeed = when (star.layer) {
-                    0 -> 1f  // Far layer - slow
-                    1 -> 2f  // Mid layer
-                    else -> 3f // Near layer - fast
-                }
-                val newY = star.y + star.speed * layerSpeed
-                if (newY > screenHeight) {
-                    star.copy(y = 0f, x = Random.nextFloat() * screenWidth)
-                } else {
-                    star.copy(y = newY)
-                }
-            }
-
-            // Apply velocity decay to player (smooth return to center tilt)
-            player = player.copy(
-                velocityX = player.velocityX * 0.85f,
-                velocityY = player.velocityY * 0.85f
-            )
-
-            // Auto-fire bullets (with weapon system and fire rate upgrades)
-            // Combine weapon stats with upgrade system
-            val upgradeFireRateMultiplier = (1.0 - playerUpgrades.fireRateLevel * 0.2).coerceAtLeast(0.2)
-            val finalFireRate = (weaponStats.effectiveFireRate * upgradeFireRateMultiplier).toLong()
-
-            if (currentTime - lastBulletFire > finalFireRate) {
-                // Apply bullet speed upgrade
-                val bulletSpeed = 20f * (1f + playerUpgrades.bulletSpeedLevel * 0.3f)
-
-                // Fire bullets based on weapon stats (spread and multi-projectile)
-                val projectileCount = weaponStats.totalProjectileCount
-                val spreadAngle = weaponStats.maxSpreadAngle
-
-                if (projectileCount == 1 && spreadAngle == 0f) {
-                    // Single straight bullet (default)
-                    bullets = bullets + Bullet(player.x, player.y - player.size / 2, bulletSpeed)
-                } else {
-                    // Multi-projectile with spread
-                    val angleStep = if (projectileCount > 1) spreadAngle / (projectileCount - 1) else 0f
-                    val startAngle = -spreadAngle / 2
-
-                    repeat(projectileCount) { i ->
-                        val angle = startAngle + (angleStep * i)
-                        val angleRad = Math.toRadians(angle.toDouble())
-                        val offsetX = sin(angleRad).toFloat() * 10f  // Slight horizontal offset
-                        bullets = bullets + Bullet(
-                            player.x + offsetX,
-                            player.y - player.size / 2,
-                            bulletSpeed
-                        )
-                    }
-                }
-
-                lastBulletFire = currentTime
-            }
-
-            // Update bullets
-            bullets = bullets.mapNotNull { bullet ->
-                val newY = bullet.y - bullet.speed
-                if (newY < -10) null
-                else bullet.copy(y = newY)
-            }
-
-            // Update difficulty based on time and score (tick rate: 500ms)
-            // Avoids expensive calculations every frame
-            if (currentTime - lastDifficultyUpdate > 500) {
-                difficultyScaler.update(survivedMilliseconds, score)
-                cachedSpawnInterval = difficultyScaler.getSpawnInterval()
-                cachedSpeedMultiplier = difficultyScaler.getSpeedMultiplier()
-                cachedEnemyHealth = difficultyScaler.getEnemyHealth()
-                lastDifficultyUpdate = currentTime
-            }
-
-            // Spawn enemies with difficulty scaling (uses cached values)
-            if (currentTime - lastSpawn > cachedSpawnInterval) {
-                val enemyType = Random.nextInt(5) // 5 different enemy types
-                val baseSpeed = when (enemyType) {
-                    3 -> Random.nextFloat() * 2f + 5f // Fast enemy
-                    else -> Random.nextFloat() * 3f + 2f
-                }
-
-                // Determine size tier and visual style
-                val sizeTier = randomSizeTier()
-                val visualStyle = randomVisualStyle()
-                val enemySize = getSizeForTier(sizeTier)
-                val enemyHealth = getHealthBonusForTier(sizeTier, cachedEnemyHealth)
-
-                val newEnemy = Enemy(
-                    x = Random.nextFloat() * (screenWidth - enemySize) + enemySize / 2,
-                    y = -enemySize,
-                    size = enemySize,
-                    speed = baseSpeed,
-                    type = enemyType,
-                    timeAlive = 0f,
-                    rotation = Random.nextFloat() * 360f,
-                    spriteVariant = Random.nextInt(3), // 0 = red, 1 = blue, 2 = green
-                    health = enemyHealth,
-                    maxHealth = enemyHealth,
-                    behaviorController = EnemyBehaviorController(),
-                    sizeTier = sizeTier,
-                    visualStyle = visualStyle
-                )
-                enemies = enemies + newEnemy
-                lastSpawn = currentTime
-            }
-
-            // Spawn power-ups periodically (TEST: every 10 seconds)
-            if (currentTime - lastPowerUpSpawn > 10000) {
-                val randomType = PowerUpType.values()[Random.nextInt(PowerUpType.values().size)]
-                val randomTier = Random.nextInt(5)  // 0-4
-                val spawnX = Random.nextFloat() * screenWidth
-                val spawnY = screenHeight * 0.3f  // Spawn in upper third of screen
-                powerUpSystem.spawnPowerUp(randomType, randomTier, spawnX, spawnY)
-                lastPowerUpSpawn = currentTime
-            }
-
-            // Check power-up pickups
-            playerHealth = powerUpSystem.handlePickupIfColliding(
-                playerX = player.x,
-                playerY = player.y,
-                playerRadius = player.size / 2,
-                currentHealth = playerHealth,
-                maxHealth = maxPlayerHealth
-            )
-
-            // Update enemies using behavior system and difficulty scaling
-            // Combine challenge modifier with difficulty scaling (uses cached value)
-            val challengeSpeedMultiplier = if (activeRisk?.type == ShopItemType.SURVIVAL_CHALLENGE && activeRisk?.isActive == true) 1.25f else 1.0f
-            val finalSpeedMultiplier = cachedSpeedMultiplier * challengeSpeedMultiplier
-
-            enemies = enemies.mapNotNull { enemy ->
-                // Update time and rotation
-                enemy.timeAlive += 0.016f
-                enemy.rotation += (2f * enemy.type)
-
-                // Use behavior controller if available, otherwise fall back to type-based movement
-                val behaviorController = enemy.behaviorController
-                if (behaviorController != null) {
-                    // Update behavior state (time-sliced internally)
-                    behaviorController.update(
-                        enemy = enemy,
-                        playerX = player.x,
-                        playerY = player.y,
-                        deltaTime = 0.016f,
-                        health = enemy.health,
-                        maxHealth = enemy.maxHealth
-                    )
-
-                    // Apply movement directly to enemy (no Pair allocation)
-                    behaviorController.applyMovement(
-                        enemy = enemy,
-                        playerX = player.x,
-                        playerY = player.y,
-                        baseSpeed = enemy.speed,
-                        speedMultiplier = finalSpeedMultiplier
-                    )
-                } else {
-                    // Fallback to old type-based movement for compatibility
-                    val speed = enemy.speed * finalSpeedMultiplier
-                    when (enemy.type) {
-                        0 -> enemy.y += speed * 4  // Straight down
-                        1 -> {
-                            enemy.x += sin(enemy.timeAlive * 3f) * 5f
-                            enemy.y += speed * 3
-                        }  // Zigzag
-                        2 -> {
-                            enemy.x += if (player.x > enemy.x) 3f else -3f
-                            enemy.y += speed * 3
-                        }  // Follow player
-                        3 -> enemy.y += speed * 4  // Fast straight
-                        4 -> {
-                            enemy.x += cos(enemy.timeAlive * 2f) * 4f
-                            enemy.y += speed * 3
-                        }  // Swoop
-                        else -> enemy.y += speed * 4
-                    }
-                }
-
-                // Clamp X position to screen bounds
-                enemy.x = enemy.x.coerceIn(0f, screenWidth)
-
-                // Remove if off screen
-                if (enemy.y > screenHeight + 100) null
-                else enemy
-            }
-
-            // Check bullet-enemy collisions with health and weapon modifiers
-            // Optimized to avoid temporary collections and use in-place updates
-            val hasPiercing = weaponStats.hasPiercing
-            val hasChaining = weaponStats.hasChaining
-            val maxChains = weaponStats.maxChains
-
-            // Process collisions and update enemies in-place
-            enemies = enemies.mapNotNull { enemy ->
-                var shouldKeep = true
-                val enemyRadius = enemy.size / 2
-                val enemyRadiusSquared = enemyRadius * enemyRadius
-
-                bullets.forEach { bullet ->
-                    val dx = bullet.x - enemy.x
-                    val dy = bullet.y - enemy.y
-                    val distanceSquared = dx * dx + dy * dy
-
-                    // Use squared distance to avoid sqrt
-                    if (distanceSquared < enemyRadiusSquared) {
-                        // Reduce enemy health
-                        enemy.health -= 1
-
-                        if (enemy.health <= 0) {
-                            // Enemy destroyed
-                            shouldKeep = false
-
-                            // Award score with multiplier for destroying enemy
-                            val basePoints = 10 * enemy.maxHealth  // Scale points with health
-                            val earnedPoints = (basePoints * currentMultiplier).toInt()
-                            score += earnedPoints
-                        }
-
-                        // Remove bullet unless it's piercing
-                        // Chaining logic handled separately to avoid complexity
-                        if (!hasPiercing && !hasChaining) {
-                            bullets = bullets.filter { it !== bullet }
-                        }
-                    }
-                }
-
-                if (shouldKeep) enemy else null
-            }
-
-            // Simple piercing bullet cleanup (remove bullets that went off-screen)
-            // Chaining is simplified - bullets hit first N enemies in range
-            if (hasPiercing || hasChaining) {
-                bullets = bullets.filter { bullet ->
-                    bullet.y >= -10  // Keep bullets that are still on screen
-                }
-            }
-
-            // Check player-enemy collisions (use squared distance)
-            // Each enemy has dynamic size based on size tier
-            enemies.forEach { enemy ->
-                val dx = player.x - enemy.x
-                val dy = player.y - enemy.y
-                val distanceSquared = dx * dx + dy * dy
-
-                // Collision radius = sum of player and enemy radii
-                val collisionRadius = (player.size + enemy.size) / 2
-                val collisionRadiusSquared = collisionRadius * collisionRadius
-
-                // Use squared distance to avoid sqrt
-                if (distanceSquared < collisionRadiusSquared) {
-                    isAlive = false
-                    return@forEach  // Early exit on collision
-                }
-            }
-
-            // Update score for survival (base 1 point per 100ms with multiplier)
-            if (currentTime - lastScoreUpdate > 100) {
-                val survivalPoints = (1 * currentMultiplier).toInt()
-                score += survivalPoints
-                lastScoreUpdate = currentTime
-            }
-
-            // Award currency (\$M) periodically with multiplier
-            if (currentTime - lastCurrencyAward > 1000) {
-                // Base currency award: 1 \$M per second
-                val baseCurrency = 1
-                val awardedCurrency = (baseCurrency * currentMultiplier).toInt()
-
-                if (awardedCurrency > 0) {
-                    earnedCurrency += awardedCurrency
-                }
-
-                lastCurrencyAward = currentTime
-            }
-
-            // Update active risk challenges
-            activeRisk?.let { risk ->
-                risk.timeRemaining -= 16 // Decrease by frame time
-                if (risk.timeRemaining <= 0) {
-                    if (isAlive && risk.isActive) {
-                        // Successfully completed challenge
-                        risk.onSuccess()
-                    } else {
-                        // Failed challenge
-                        risk.onFailure()
-                    }
-                    activeRisk = null
-                }
-            }
+            // Update game engine with real delta time (frame-independent)
+            gameEngine.update(dtMs)
         }
 
-        if (!isAlive) {
+        if (!gameState.isAlive) {
             delay(2000)
-            onGameOver(score, earnedCurrency)
+            onGameOver(gameState.score, gameState.earnedCurrency)
         }
     }
 
@@ -1804,12 +1338,7 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                 .pointerInput(Unit) {
                     detectDragGestures { change, dragAmount ->
                         change.consume()
-                        player = player.copy(
-                            x = (player.x + dragAmount.x).coerceIn(0f, screenWidth),
-                            y = (player.y + dragAmount.y).coerceIn(0f, screenHeight),
-                            velocityX = dragAmount.x,
-                            velocityY = dragAmount.y
-                        )
+                        gameEngine.handlePlayerDrag(dragAmount.x, dragAmount.y)
                     }
                 }
                 .pointerInput(BuildConfig.DEBUG) {
@@ -1840,7 +1369,7 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
             backgroundManager.draw(this)
 
             // Draw stars with parallax layers
-            stars.forEach { star ->
+            gameState.stars.forEach { star ->
                 val alpha = when (star.layer) {
                     0 -> 0.4f  // Far stars - dim
                     1 -> 0.6f  // Mid stars
@@ -1855,30 +1384,30 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
             }
 
             // Draw space center (floating shop)
-            spaceCenter?.let { center ->
+            gameState.spaceCenter?.let { center ->
                 drawSpaceCenter(center, spaceCenterSprite)
             }
 
             // Draw bullets
-            bullets.forEach { bullet ->
+            gameState.bullets.forEach { bullet ->
                 drawBullet(bullet)
             }
 
             // Draw power-ups
-            powerUpSystem.worldPowerUps.forEach { powerUp ->
+            gameState.powerUps.forEach { powerUp ->
                 if (powerUp.alive) {
                     drawPowerUp(powerUp, powerUpSprite)
                 }
             }
 
             // Draw enemies (using procedural shapes + sprite system)
-            enemies.forEach { enemy ->
+            gameState.enemies.forEach { enemy ->
                 drawEnemy(enemy, enemyRenderer)
             }
 
             // Draw player
-            if (isAlive) {
-                drawPlayer(player, playerSprite)
+            if (gameState.isAlive) {
+                drawPlayer(gameState.player, playerSprite)
             }
         }
 
@@ -1890,7 +1419,7 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                text = "SCORE: $score",
+                text = "SCORE: ${gameState.score}",
                 fontSize = 28.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.Cyan
@@ -1907,7 +1436,7 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                     color = Color.White
                 )
                 Text(
-                    text = "$earnedCurrency",
+                    text = "${gameState.earnedCurrency}",
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF00FF00) // Green
@@ -1915,7 +1444,7 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
             }
 
             Text(
-                text = "x${String.format("%.2f", currentMultiplier)}",
+                text = "x${String.format("%.2f", gameState.currentMultiplier)}",
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFFFFD700), // Gold
@@ -1924,7 +1453,7 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
         }
 
         // Interaction prompt when near space center
-        if (playerInsideShop && !isShopOpen && spaceCenter != null) {
+        if (gameState.playerInsideShop && !gameState.isShopOpen && gameState.spaceCenter != null) {
             Card(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -1944,64 +1473,21 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
         }
 
         // Shop overlay
-        if (isShopOpen) {
+        if (gameState.isShopOpen) {
             ShopOverlay(
-                currentCurrency = earnedCurrency,
-                shopIndex = shopIndex,
-                shopItems = generateShopItems(shopIndex, (System.currentTimeMillis() - 0) / 1000),
-                playerUpgrades = playerUpgrades,
-                purchasesRemaining = maxPurchasesPerWindow - purchasesThisWindow,
+                currentCurrency = gameState.earnedCurrency,
+                shopIndex = gameState.shopIndex,
+                shopItems = gameState.shopItems,
+                playerUpgrades = gameState.playerUpgrades,
+                purchasesRemaining = gameState.maxPurchasesPerWindow - gameState.purchasesThisWindow,
                 onPurchase = { item ->
-                    val debtMultiplier = if (playerUpgrades.debtPenaltyShopsRemaining > 0) 1.5 else 1.0
-                    val cost = calculateItemCost(item.baseCost, shopIndex, debtMultiplier)
-
-                    if (earnedCurrency >= cost && purchasesThisWindow < maxPurchasesPerWindow) {
-                        earnedCurrency -= cost
-                        purchasesThisWindow++
-
-                        // Apply upgrade effects
-                        when (item.type) {
-                            ShopItemType.FIRE_RATE -> playerUpgrades = playerUpgrades.copy(fireRateLevel = playerUpgrades.fireRateLevel + 1)
-                            ShopItemType.BULLET_SPEED -> playerUpgrades = playerUpgrades.copy(bulletSpeedLevel = playerUpgrades.bulletSpeedLevel + 1)
-                            ShopItemType.SCORE_BOOST -> playerUpgrades = playerUpgrades.copy(scoreBoostPercent = playerUpgrades.scoreBoostPercent + 0.15)
-                            ShopItemType.CURRENCY_BOOST -> playerUpgrades = playerUpgrades.copy(currencyBoostPercent = playerUpgrades.currencyBoostPercent + 0.15)
-                            ShopItemType.GLASS_CANNON -> {
-                                playerUpgrades = playerUpgrades.copy(
-                                    glassCannonActive = true,
-                                    scoreBoostPercent = playerUpgrades.scoreBoostPercent + 0.4,
-                                    currencyBoostPercent = playerUpgrades.currencyBoostPercent + 0.4
-                                )
-                            }
-                            ShopItemType.DEBT_ADVANCE -> {
-                                earnedCurrency += 50
-                                playerUpgrades = playerUpgrades.copy(debtPenaltyShopsRemaining = 2)
-                            }
-                            ShopItemType.SURVIVAL_CHALLENGE -> {
-                                // Activate challenge: +25% enemy speed for 30s
-                                activeRisk = RiskState(
-                                    type = ShopItemType.SURVIVAL_CHALLENGE,
-                                    description = "Survive 30s with faster enemies",
-                                    timeRemaining = 30000,
-                                    onSuccess = {
-                                        permanentMultiplierBonus += 0.15
-                                    },
-                                    onFailure = { /* No reward */ }
-                                )
-                            }
-                            ShopItemType.EXTREME_MULTIPLIER -> {
-                                playerUpgrades = playerUpgrades.copy(
-                                    extremeMultiplierActive = true,
-                                    currencyBoostPercent = playerUpgrades.currencyBoostPercent + 1.0 // Double
-                                )
-                            }
-                        }
-                    }
+                    gameEngine.purchaseShopItem(item)
                 },
-                onClose = { isShopOpen = false }
+                onClose = { gameEngine.closeShop() }
             )
         }
 
-        if (!isAlive) {
+        if (!gameState.isAlive) {
             Text(
                 text = "GAME OVER",
                 fontSize = 48.sp,
@@ -2384,21 +1870,8 @@ class EnemyRenderer(private val context: Context) {
      * Call this once during initialization.
      */
     fun loadSprites() {
-        evilShipSprite = loadSprite("evil_enemy_spaceship_001")
-    }
-
-    private fun loadSprite(resourceName: String): ImageBitmap? {
-        return try {
-            val resourceId = context.resources.getIdentifier(
-                resourceName,
-                "drawable",
-                context.packageName
-            )
-            if (resourceId != 0) {
-                BitmapFactory.decodeResource(context.resources, resourceId).asImageBitmap()
-            } else {
-                null
-            }
+        evilShipSprite = try {
+            BitmapFactory.decodeResource(context.resources, R.drawable.evil_enemy_spaceship_001).asImageBitmap()
         } catch (e: Exception) {
             null
         }

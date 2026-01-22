@@ -399,12 +399,12 @@ class GameEngine(
             val bulletSpeed = 20f * (1f + playerUpgrades.bulletSpeedLevel * 0.3f)
 
             // Get active modifiers from power-ups
-            val modifiers = mutableListOf(WeaponModifier())
+            val modifiers = mutableListOf(WeaponModifier(id = "base"))
             powerUpSystem.activeEffects[PowerUpType.MULTISHOT]?.let {
-                modifiers.add(WeaponModifier(projectileCount = 3, spreadAngle = 15f))
+                modifiers.add(WeaponModifier(id = "multishot", projectileCount = 3, spreadAngle = 15f))
             }
             powerUpSystem.activeEffects[PowerUpType.FIREPOWER]?.let {
-                modifiers.add(WeaponModifier(isPiercing = true))
+                modifiers.add(WeaponModifier(id = "firepower", isPiercing = true))
             }
 
             // Fire bullets based on modifiers

@@ -140,17 +140,18 @@ class GameEngine(
                            permanentMultiplierBonus
 
         // Update star parallax
-        updateStars()
+        updateStars(dtMs)
 
-        // Apply player velocity decay
-        player.velocityX *= 0.85f
-        player.velocityY *= 0.85f
+        // Apply player velocity decay (frame-independent)
+        val decayFactor = kotlin.math.pow(0.85, dtMs / 16.0).toFloat()
+        player.velocityX *= decayFactor
+        player.velocityY *= decayFactor
 
         // Auto-fire bullets
         updateWeaponFiring(currentTime)
 
         // Update bullets
-        updateBullets()
+        updateBullets(dtMs)
 
         // Update difficulty (every 500ms)
         if (currentTime - lastDifficultyUpdate > 500) {
@@ -178,7 +179,7 @@ class GameEngine(
         checkPowerUpCollisions()
 
         // Update enemies
-        updateEnemies()
+        updateEnemies(dtMs)
 
         // Check bullet-enemy collisions
         checkBulletEnemyCollisions()
@@ -190,7 +191,7 @@ class GameEngine(
         awardScoreAndCurrency(currentTime)
 
         // Update active risk challenges
-        updateRiskChallenges(currentTime)
+        updateRiskChallenges(dtMs)
 
         // Update background
         backgroundManager.update(dtMs / 1000f)
@@ -371,9 +372,10 @@ class GameEngine(
         }
     }
 
-    private fun updateStars() {
+    private fun updateStars(dtMs: Long) {
+        val speedScale = dtMs / 16f // Scale speed relative to 16ms baseline
         for (star in stars) {
-            star.y += star.speed
+            star.y += star.speed * speedScale
             if (star.y > screenHeight) {
                 star.y = 0f
                 star.x = (0..screenWidth.toInt()).random().toFloat()
@@ -419,9 +421,10 @@ class GameEngine(
         }
     }
 
-    private fun updateBullets() {
+    private fun updateBullets(dtMs: Long) {
+        val speedScale = dtMs / 16f // Scale speed relative to 16ms baseline
         bullets.removeAll { bullet ->
-            bullet.y -= bullet.speed
+            bullet.y -= bullet.speed * speedScale
             bullet.y < 0
         }
     }
@@ -498,16 +501,18 @@ class GameEngine(
         }
     }
 
-    private fun updateEnemies() {
+    private fun updateEnemies(dtMs: Long) {
+        val dtSec = dtMs / 1000f
+
         for (enemy in enemies) {
-            enemy.timeAlive += 0.016f // Fixed 16ms for now
-            enemy.rotation += 1f
+            enemy.timeAlive += dtSec
+            enemy.rotation += 1f * (dtMs / 16f) // Scale rotation by delta time
 
             // Update behavior controller
             enemy.behaviorController?.update(
                 enemy = enemy,
                 player = player,
-                deltaTime = 0.016f
+                deltaTime = dtSec
             )
 
             // Apply behavior movement
@@ -519,7 +524,8 @@ class GameEngine(
                 EnemyState.IDLE -> 1.0f
             }
 
-            enemy.y += enemy.speed * speedMultiplier
+            val speedScale = dtMs / 16f // Scale speed relative to 16ms baseline
+            enemy.y += enemy.speed * speedMultiplier * speedScale
         }
 
         // Remove off-screen enemies
@@ -580,9 +586,9 @@ class GameEngine(
         earnedCurrency = (baseCurrency * currentMultiplier).toInt()
     }
 
-    private fun updateRiskChallenges(currentTime: Long) {
+    private fun updateRiskChallenges(dtMs: Long) {
         activeRisk?.let { risk ->
-            val remaining = risk.timeRemaining - 16 // Fixed 16ms
+            val remaining = risk.timeRemaining - dtMs
             if (remaining <= 0) {
                 risk.onSuccess()
                 activeRisk = null

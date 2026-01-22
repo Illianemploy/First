@@ -1280,28 +1280,27 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
     var debugTapCount by remember { mutableIntStateOf(0) }
     var lastDebugTap by remember { mutableLongStateOf(0L) }
 
-    // Game loop - simplified to call gameEngine.update()
+    // Game loop - measures real delta time for frame-independent movement
     LaunchedEffect(gameState.isAlive) {
         val frameTimes = mutableListOf<Long>()
-        var lastFrameTime = System.currentTimeMillis()
+        var lastUpdateTime = System.currentTimeMillis()
         var lastDebugUpdate = 0L
 
         while (isActive && gameState.isAlive) {
-            delay(16) // ~60 FPS
+            delay(16) // Target ~60 FPS, but actual delta may vary
 
             val currentTime = System.currentTimeMillis()
+            val dtMs = (currentTime - lastUpdateTime).coerceIn(0L, 50L) // Clamp to 50ms max (prevent spiral of death)
+            lastUpdateTime = currentTime
 
             // Track frame time for debug overlay (only if debug is enabled)
             if (BuildConfig.DEBUG && debugOverlayEnabled) {
-                val frameTime = currentTime - lastFrameTime
-                frameTimes.add(frameTime)
+                frameTimes.add(dtMs)
 
                 // Keep only last 60 frames (1 second at 60 FPS)
                 if (frameTimes.size > 60) {
                     frameTimes.removeAt(0)
                 }
-
-                lastFrameTime = currentTime
 
                 // Update debug metrics every 250ms
                 if (currentTime - lastDebugUpdate > 250) {
@@ -1322,8 +1321,8 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                 }
             }
 
-            // Update game engine with fixed 16ms timestep
-            gameEngine.update(16L)
+            // Update game engine with real delta time (frame-independent)
+            gameEngine.update(dtMs)
         }
 
         if (!gameState.isAlive) {

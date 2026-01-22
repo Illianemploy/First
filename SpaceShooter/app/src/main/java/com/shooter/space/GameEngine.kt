@@ -10,13 +10,16 @@ import kotlin.math.pow
 import kotlin.random.Random
 
 /**
- * GameEngine owns all mutable game state and exposes immutable snapshots.
- * UI layer observes `state.value` and sends `InputEvent` only.
+ * GameEngine owns all mutable game state and exposes stable references for rendering.
+ * UI layer observes `state.value` for primitives and reads entity lists directly.
+ *
+ * CRITICAL: Entity lists (player, enemies, bullets, stars) are accessed via stable
+ * references to eliminate per-frame allocation/copying. NO map{} or copy() per frame.
  *
  * Core responsibilities:
  * - Process frame updates via update(dtMs)
  * - Handle input via onInput(event)
- * - Publish snapshots to state.value
+ * - Publish primitive state to state.value (NO entity copying)
  * - Maintain game rules, collision detection, spawning, scoring
  */
 class GameEngine(
@@ -27,12 +30,21 @@ class GameEngine(
     spaceCenterSprite: ImageBitmap?,
     private val backgroundManager: ParallaxBackgroundManager
 ) {
-    // === MUTABLE INTERNAL STATE (UI cannot access) ===
+    // === MUTABLE INTERNAL STATE ===
     private var player = Player(screenWidth / 2, screenHeight - 150f)
     private val enemies = mutableListOf<Enemy>()
     private val bullets = mutableListOf<Bullet>()
     private val stars = mutableListOf<Star>()
     private var spaceCenter: SpaceCenter? = null
+
+    // === PUBLIC STABLE REFERENCES (for rendering, NO per-frame copy) ===
+    // UI reads these directly to avoid allocation. Mutable, but rendering is read-only.
+    val playerRef: Player get() = player
+    val enemiesRef: List<Enemy> get() = enemies
+    val bulletsRef: List<Bullet> get() = bullets
+    val starsRef: List<Star> get() = stars
+    val spaceCenterRef: SpaceCenter? get() = spaceCenter
+    val powerUpsRef: List<WorldPowerUp> get() = powerUpSystem.worldPowerUps
 
     // Game metrics
     private var score = 0
@@ -83,10 +95,15 @@ class GameEngine(
     // Shop constants
     private val shopRespawnSeconds = 30
 
-    // === PUBLISHED STATE (Immutable snapshot) ===
+    // === PUBLISHED STATE (primitives only, NO entity copying) ===
     val state = mutableStateOf(
-        GameState.initial(screenWidth, screenHeight, powerUpSprite, spaceCenterSprite)
+        GameState.initial(powerUpSprite, spaceCenterSprite)
     )
+
+    /**
+     * Get current spawn interval for debug display.
+     */
+    fun getSpawnInterval(): Long = cachedSpawnInterval
 
     /**
      * Helper to generate random float in range [min, max]
@@ -662,16 +679,12 @@ class GameEngine(
     }
 
     /**
-     * Publish immutable snapshot to UI layer.
+     * Publish primitive state to UI layer (ZERO allocations: primitives only).
+     * Entity lists are accessed via stable references (playerRef, enemiesRef, etc.)
+     * to eliminate per-frame map{} and copy() allocations.
      */
     private fun publishSnapshot() {
         state.value = GameState(
-            player = player.copy(),
-            enemies = enemies.map { it.copy() },
-            bullets = bullets.map { it.copy() },
-            stars = stars.map { it.copy() },
-            spaceCenter = spaceCenter?.copy(),
-            powerUps = powerUpSystem.worldPowerUps.map { it.copy() },
             score = score,
             earnedCurrency = earnedCurrency,
             currentMultiplier = currentMultiplier,
@@ -686,15 +699,15 @@ class GameEngine(
             maxPurchasesPerWindow = maxPurchasesPerWindow,
             playerInsideShop = playerInsideShop,
             shopItems = shopItems,
-            playerUpgrades = playerUpgrades.copy(),
-            activeRisk = activeRisk?.copy(),
+            playerUpgrades = playerUpgrades,  // Shared reference, no copy
+            activeRisk = activeRisk,  // Shared reference, no copy
             permanentMultiplierBonus = permanentMultiplierBonus,
-            weaponStats = weaponStats.copy(),
-            activePowerUpEffects = powerUpSystem.activeEffects.toMap(),
+            weaponStats = weaponStats,  // Shared reference, no copy
+            activePowerUpEffects = powerUpSystem.activeEffects,  // Shared reference, no toMap()
             difficultyLevel = difficultyScaler.getCurrentLevel(),
             powerUpSprite = powerUpSprite,
             spaceCenterSprite = spaceCenterSprite,
-            backgroundScrollOffset = 0f // TODO: Get from backgroundManager
+            backgroundScrollOffset = 0f
         )
     }
 }

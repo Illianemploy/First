@@ -4,22 +4,14 @@ import androidx.compose.ui.graphics.ImageBitmap
 import kotlin.random.Random
 
 /**
- * Immutable snapshot of all game state at a point in time.
- * Published by GameEngine for UI rendering only.
- * UI must NOT mutate any fields - all changes go through InputEvent.
+ * Lightweight game state containing only primitives and slow-changing UI state.
+ * Entity lists (enemies, bullets, stars, etc.) are accessed directly from GameEngine
+ * to eliminate per-frame allocation/copying.
+ *
+ * UI reads entities from GameEngine stable references, not copied snapshots.
  */
 data class GameState(
-    // === CORE ENTITIES ===
-    val player: Player,
-    val enemies: List<Enemy>,
-    val bullets: List<Bullet>,
-    val stars: List<Star>,
-
-    // === INTERACTIVE OBJECTS ===
-    val spaceCenter: SpaceCenter?,
-    val powerUps: List<WorldPowerUp>, // From PowerUpSystem.worldPowerUps
-
-    // === GAME METRICS ===
+    // === GAME METRICS (primitives only) ===
     val score: Int,
     val earnedCurrency: Int,
     val currentMultiplier: Double,
@@ -64,30 +56,14 @@ data class GameState(
             Random.nextFloat() * (max - min) + min
 
         /**
-         * Factory method for initial game state.
-         * Called once at game start or restart.
+         * Factory method for initial game state (primitives only).
+         * Entity initialization happens in GameEngine.
          */
         fun initial(
-            screenWidth: Float,
-            screenHeight: Float,
             powerUpSprite: ImageBitmap?,
             spaceCenterSprite: ImageBitmap?
         ): GameState {
             return GameState(
-                player = Player(screenWidth / 2, screenHeight - 150f),
-                enemies = emptyList(),
-                bullets = emptyList(),
-                stars = List(100) {
-                    Star(
-                        x = Random.nextInt(0, screenWidth.toInt() + 1).toFloat(),
-                        y = Random.nextInt(0, screenHeight.toInt() + 1).toFloat(),
-                        size = randFloat(1f, 3f),
-                        speed = randFloat(2f, 5f),
-                        layer = Random.nextInt(0, 3)
-                    )
-                },
-                spaceCenter = null,
-                powerUps = emptyList(),
                 score = 0,
                 earnedCurrency = 0,
                 currentMultiplier = 1.0,

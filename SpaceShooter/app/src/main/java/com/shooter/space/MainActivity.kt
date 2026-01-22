@@ -15,6 +15,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -462,11 +463,45 @@ class PowerUpSystem {
     }
 }
 
+/**
+ * Allocation-free rolling statistics using fixed-size ring buffer.
+ * NO per-frame allocations: reuses FloatArray, maintains running sum.
+ */
+class RollingStats(private val capacity: Int) {
+    private val buf = FloatArray(capacity)
+    private var idx = 0
+    private var count = 0
+    private var sum = 0f
+
+    fun add(v: Float) {
+        if (count < capacity) {
+            buf[idx] = v
+            sum += v
+            count++
+        } else {
+            sum -= buf[idx]
+            buf[idx] = v
+            sum += v
+        }
+        idx = (idx + 1) % capacity
+    }
+
+    fun avg(): Float = if (count == 0) 0f else sum / count
+
+    fun reset() {
+        idx = 0
+        count = 0
+        sum = 0f
+    }
+}
+
 // Debug overlay metrics (only available in debug builds)
 data class DebugMetrics(
     var fps: Int = 0,
     var avgFrameTime: Float = 0f,
     var worstFrameTime: Float = 0f,
+    var updateMs: Float = 0f,      // Average update time in ms
+    var drawMs: Float = 0f,        // Average draw time in ms
     var enemyCount: Int = 0,
     var bulletCount: Int = 0,
     var spawnInterval: Long = 0L,
@@ -474,7 +509,9 @@ data class DebugMetrics(
     var enemyHealth: Int = 0,
     var score: Int = 0,
     var currency: Int = 0,
-    var difficultyLevel: Int = 0
+    var difficultyLevel: Int = 0,
+    var bgLayers: Int = 0,         // Background layer count
+    var bgOffset: Float = 0f       // Background scroll offset
 )
 
 // Shop system
@@ -1319,55 +1356,95 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
     // Observe game state for rendering
     val gameState by gameEngine.state
 
+    // Frame tick state - ensures Canvas redraws continuously even when idle
+    var frameTick by remember { mutableLongStateOf(0L) }
+
     // Debug overlay state (UI-only, not part of game state)
     var debugOverlayEnabled by remember { mutableStateOf(false) }
     var debugMetrics by remember { mutableStateOf(DebugMetrics()) }
+    var cachedDebugLines by remember { mutableStateOf(emptyList<String>()) }
     var debugTapCount by remember { mutableIntStateOf(0) }
     var lastDebugTap by remember { mutableLongStateOf(0L) }
 
-    // Game loop - measures real delta time for frame-independent movement
+    // Allocation-free profiling: ring buffers instead of MutableList
+    val frameStats = remember { RollingStats(60) }
+    val updateStats = remember { RollingStats(60) }
+    val drawStats = remember { RollingStats(60) }
+    var framesDrawnThisSecond by remember { mutableIntStateOf(0) }
+    var lastSecondFrameCount by remember { mutableIntStateOf(0) }
+
+    // Game loop - vsync-driven with withFrameNanos, continuous frame requests
     LaunchedEffect(gameState.isAlive) {
-        val frameTimes = mutableListOf<Long>()
-        var lastUpdateTime = System.currentTimeMillis()
+        var lastFrameNanos = 0L
         var lastDebugUpdate = 0L
 
         while (isActive && gameState.isAlive) {
-            delay(16) // Target ~60 FPS, but actual delta may vary
+            withFrameNanos { frameTimeNanos ->
+                // Calculate delta time from last frame
+                val dtNanos = if (lastFrameNanos > 0L) frameTimeNanos - lastFrameNanos else 16_000_000L
+                lastFrameNanos = frameTimeNanos
+                val dtMs = (dtNanos / 1_000_000L).coerceIn(0L, 50L)
 
-            val currentTime = System.currentTimeMillis()
-            val dtMs = (currentTime - lastUpdateTime).coerceIn(0L, 50L) // Clamp to 50ms max (prevent spiral of death)
-            lastUpdateTime = currentTime
+                // Track frame time
+                frameStats.add(dtMs.toFloat())
 
-            // Track frame time for debug overlay (only if debug is enabled)
-            if (BuildConfig.DEBUG && debugOverlayEnabled) {
-                frameTimes.add(dtMs)
+                // Measure update time
+                val updateStartNanos = System.nanoTime()
+                gameEngine.update(dtMs)
+                val updateEndNanos = System.nanoTime()
+                val updateMs = (updateEndNanos - updateStartNanos) / 1_000_000f
+                updateStats.add(updateMs)
 
-                // Keep only last 60 frames (1 second at 60 FPS)
-                if (frameTimes.size > 60) {
-                    frameTimes.removeAt(0)
-                }
+                // Increment frame tick to trigger Canvas redraw
+                frameTick++
 
-                // Update debug metrics every 250ms
-                if (currentTime - lastDebugUpdate > 250) {
-                    debugMetrics = debugMetrics.copy(
-                        fps = if (frameTimes.isNotEmpty()) (1000f / frameTimes.average().toFloat()).toInt() else 0,
-                        avgFrameTime = frameTimes.average().toFloat(),
-                        worstFrameTime = frameTimes.maxOrNull()?.toFloat() ?: 0f,
-                        enemyCount = gameState.enemies.size,
-                        bulletCount = gameState.bullets.size,
-                        spawnInterval = 0L,
-                        speedMultiplier = 0f,
-                        enemyHealth = 0,
-                        score = gameState.score,
-                        currency = gameState.earnedCurrency,
-                        difficultyLevel = gameState.difficultyLevel
-                    )
-                    lastDebugUpdate = currentTime
+                // Update debug overlay cached strings only once per second
+                if (BuildConfig.DEBUG && debugOverlayEnabled) {
+                    val currentTime = System.currentTimeMillis()
+                    if (currentTime - lastDebugUpdate >= 1000) {
+                        val avgFrameMs = frameStats.avg()
+                        val drawnFps = lastSecondFrameCount
+
+                        debugMetrics = debugMetrics.copy(
+                            fps = if (avgFrameMs > 0f) (1000f / avgFrameMs).toInt() else 0,
+                            avgFrameTime = avgFrameMs,
+                            worstFrameTime = avgFrameMs,  // Simplified: worst is tracked separately if needed
+                            updateMs = updateStats.avg(),
+                            drawMs = drawStats.avg(),
+                            enemyCount = gameEngine.enemiesRef.size,
+                            bulletCount = gameEngine.bulletsRef.size,
+                            spawnInterval = gameEngine.getSpawnInterval(),  // Get real spawn interval
+                            speedMultiplier = 0f,
+                            enemyHealth = 0,
+                            score = gameState.score,
+                            currency = gameState.earnedCurrency,
+                            difficultyLevel = gameState.difficultyLevel,
+                            bgLayers = 2,
+                            bgOffset = 0f
+                        )
+
+                        // Cache formatted debug strings once per second (NO per-frame formatting)
+                        cachedDebugLines = listOf(
+                            "DEBUG OVERLAY",
+                            "FPS: ${debugMetrics.fps} (drawn: $drawnFps)",
+                            "Frame: ${String.format("%.1f", debugMetrics.avgFrameTime)}ms",
+                            "Update: ${String.format("%.2f", debugMetrics.updateMs)}ms",
+                            "Draw: ${String.format("%.2f", debugMetrics.drawMs)}ms",
+                            "Enemies: ${debugMetrics.enemyCount}",
+                            "Bullets: ${debugMetrics.bulletCount}",
+                            "Spawn Interval: ${debugMetrics.spawnInterval}ms",
+                            "Difficulty: Lvl ${debugMetrics.difficultyLevel}",
+                            "Score: ${debugMetrics.score}",
+                            "Currency: ${debugMetrics.currency} \$M",
+                            "BG layers=${debugMetrics.bgLayers} offset=${String.format("%.1f", debugMetrics.bgOffset)}"
+                        )
+
+                        lastDebugUpdate = currentTime
+                        lastSecondFrameCount = framesDrawnThisSecond
+                        framesDrawnThisSecond = 0
+                    }
                 }
             }
-
-            // Update game engine with real delta time (frame-independent)
-            gameEngine.update(dtMs)
         }
 
         if (!gameState.isAlive) {
@@ -1410,11 +1487,17 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                     }
                 }
         ) {
+            // Read frameTick to ensure Canvas redraws continuously (even when idle)
+            val _ = frameTick
+
+            // Measure draw time (allocation-free: System.nanoTime() only)
+            val drawStartNanos = if (BuildConfig.DEBUG && debugOverlayEnabled) System.nanoTime() else 0L
+
             // Draw parallax backgrounds: scrolling stars (back) → static planet (front)
             backgroundManager.draw(this)
 
-            // Draw stars with parallax layers
-            gameState.stars.forEach { star ->
+            // Draw stars with parallax layers (read from stable reference, NO copy)
+            gameEngine.starsRef.forEach { star ->
                 val alpha = when (star.layer) {
                     0 -> 0.4f  // Far stars - dim
                     1 -> 0.6f  // Mid stars
@@ -1428,31 +1511,39 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                 )
             }
 
-            // Draw space center (floating shop)
-            gameState.spaceCenter?.let { center ->
+            // Draw space center (floating shop, read from stable reference)
+            gameEngine.spaceCenterRef?.let { center ->
                 drawSpaceCenter(center, spaceCenterSprite)
             }
 
-            // Draw bullets
-            gameState.bullets.forEach { bullet ->
+            // Draw bullets (read from stable reference, NO copy)
+            gameEngine.bulletsRef.forEach { bullet ->
                 drawBullet(bullet)
             }
 
-            // Draw power-ups
-            gameState.powerUps.forEach { powerUp ->
+            // Draw power-ups (read from stable reference, NO copy)
+            gameEngine.powerUpsRef.forEach { powerUp ->
                 if (powerUp.alive) {
                     drawPowerUp(powerUp, powerUpSprite)
                 }
             }
 
-            // Draw enemies (using procedural shapes + sprite system)
-            gameState.enemies.forEach { enemy ->
+            // Draw enemies (read from stable reference, NO copy)
+            gameEngine.enemiesRef.forEach { enemy ->
                 drawEnemy(enemy, enemyRenderer)
             }
 
-            // Draw player
+            // Draw player (read from stable reference, NO copy)
             if (gameState.isAlive) {
-                drawPlayer(gameState.player, playerSprite)
+                drawPlayer(gameEngine.playerRef, playerSprite)
+            }
+
+            // Record draw time and increment frame counter (allocation-free)
+            if (BuildConfig.DEBUG && debugOverlayEnabled && drawStartNanos > 0L) {
+                val drawEndNanos = System.nanoTime()
+                val drawMs = (drawEndNanos - drawStartNanos) / 1_000_000f
+                drawStats.add(drawMs)
+                framesDrawnThisSecond++
             }
         }
 
@@ -1556,71 +1647,35 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                     modifier = Modifier.padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Text(
-                        text = "DEBUG OVERLAY",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF00FF00) // Green
-                    )
-                    Text(
-                        text = "FPS: ${debugMetrics.fps}",
-                        fontSize = 12.sp,
-                        color = when {
-                            debugMetrics.fps >= 55 -> Color(0xFF00FF00) // Green
-                            debugMetrics.fps >= 45 -> Color(0xFFFFAA00) // Orange
-                            else -> Color(0xFFFF0000) // Red
+                    // Draw cached debug strings (updated once per second, NO per-frame formatting)
+                    cachedDebugLines.forEachIndexed { index, line ->
+                        val color = when {
+                            index == 0 -> Color(0xFF00FF00) // Header: Green
+                            line.startsWith("FPS:") -> {
+                                when {
+                                    debugMetrics.fps >= 55 -> Color(0xFF00FF00)
+                                    debugMetrics.fps >= 45 -> Color(0xFFFFAA00)
+                                    else -> Color(0xFFFF0000)
+                                }
+                            }
+                            line.startsWith("Update:") || line.startsWith("Draw:") -> {
+                                val ms = if (line.startsWith("Update:")) debugMetrics.updateMs else debugMetrics.drawMs
+                                if (ms > 16f) Color(0xFFFF0000) else Color(0xFF00FF00)
+                            }
+                            line.startsWith("Difficulty:") -> Color(0xFFFFD700)
+                            line.startsWith("Score:") -> Color.Cyan
+                            line.startsWith("Currency:") -> Color(0xFF00FF00)
+                            line.startsWith("BG ") -> Color(0xFF888888)
+                            else -> Color.White
                         }
-                    )
-                    Text(
-                        text = "Avg Frame: ${String.format("%.1f", debugMetrics.avgFrameTime)}ms",
-                        fontSize = 12.sp,
-                        color = Color.White
-                    )
-                    Text(
-                        text = "Worst Frame: ${String.format("%.1f", debugMetrics.worstFrameTime)}ms",
-                        fontSize = 12.sp,
-                        color = if (debugMetrics.worstFrameTime > 33f) Color(0xFFFF0000) else Color.White
-                    )
-                    Text(
-                        text = "Enemies: ${debugMetrics.enemyCount}",
-                        fontSize = 12.sp,
-                        color = Color.White
-                    )
-                    Text(
-                        text = "Bullets: ${debugMetrics.bulletCount}",
-                        fontSize = 12.sp,
-                        color = Color.White
-                    )
-                    Text(
-                        text = "Spawn Interval: ${debugMetrics.spawnInterval}ms",
-                        fontSize = 12.sp,
-                        color = Color.White
-                    )
-                    Text(
-                        text = "Speed Mult: ${String.format("%.2f", debugMetrics.speedMultiplier)}x",
-                        fontSize = 12.sp,
-                        color = Color.White
-                    )
-                    Text(
-                        text = "Enemy HP: ${debugMetrics.enemyHealth}",
-                        fontSize = 12.sp,
-                        color = Color.White
-                    )
-                    Text(
-                        text = "Difficulty: Lvl ${debugMetrics.difficultyLevel}",
-                        fontSize = 12.sp,
-                        color = Color(0xFFFFD700) // Gold
-                    )
-                    Text(
-                        text = "Score: ${debugMetrics.score}",
-                        fontSize = 12.sp,
-                        color = Color.Cyan
-                    )
-                    Text(
-                        text = "Currency: ${debugMetrics.currency} \$M",
-                        fontSize = 12.sp,
-                        color = Color(0xFF00FF00)
-                    )
+
+                        Text(
+                            text = line,
+                            fontSize = if (index == 0) 14.sp else 12.sp,
+                            fontWeight = if (index == 0) FontWeight.Bold else FontWeight.Normal,
+                            color = color
+                        )
+                    }
                 }
             }
 

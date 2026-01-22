@@ -6,6 +6,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.ImageBitmap
 import kotlin.math.ln
 import kotlin.math.min
+import kotlin.math.pow
+import kotlin.random.Random
 
 /**
  * GameEngine owns all mutable game state and exposes immutable snapshots.
@@ -86,16 +88,22 @@ class GameEngine(
         GameState.initial(screenWidth, screenHeight, powerUpSprite, spaceCenterSprite)
     )
 
+    /**
+     * Helper to generate random float in range [min, max]
+     */
+    private fun randFloat(min: Float, max: Float): Float =
+        Random.nextFloat() * (max - min) + min
+
     init {
         // Initialize stars
         repeat(100) {
             stars.add(
                 Star(
-                    x = (0..screenWidth.toInt()).random().toFloat(),
-                    y = (0..screenHeight.toInt()).random().toFloat(),
-                    size = (1f..3f).random(),
-                    speed = (2f..5f).random(),
-                    layer = (0..2).random()
+                    x = Random.nextInt(0, screenWidth.toInt() + 1).toFloat(),
+                    y = Random.nextInt(0, screenHeight.toInt() + 1).toFloat(),
+                    size = randFloat(1f, 3f),
+                    speed = randFloat(2f, 5f),
+                    layer = Random.nextInt(0, 3)
                 )
             )
         }
@@ -143,7 +151,7 @@ class GameEngine(
         updateStars(dtMs)
 
         // Apply player velocity decay (frame-independent)
-        val decayFactor = kotlin.math.pow(0.85, dtMs / 16.0).toFloat()
+        val decayFactor = 0.85.pow((dtMs / 16.0)).toFloat()
         player.velocityX *= decayFactor
         player.velocityY *= decayFactor
 
@@ -301,11 +309,11 @@ class GameEngine(
         repeat(100) {
             stars.add(
                 Star(
-                    x = (0..screenWidth.toInt()).random().toFloat(),
-                    y = (0..screenHeight.toInt()).random().toFloat(),
-                    size = (1f..3f).random(),
-                    speed = (2f..5f).random(),
-                    layer = (0..2).random()
+                    x = Random.nextInt(0, screenWidth.toInt() + 1).toFloat(),
+                    y = Random.nextInt(0, screenHeight.toInt() + 1).toFloat(),
+                    size = randFloat(1f, 3f),
+                    speed = randFloat(2f, 5f),
+                    layer = Random.nextInt(0, 3)
                 )
             )
         }
@@ -319,7 +327,7 @@ class GameEngine(
         // Spawn space center if needed (30s cooldown after exit)
         if (spaceCenter == null && (shopExitTime == 0L || currentTime - shopExitTime > shopRespawnSeconds * 1000)) {
             spaceCenter = SpaceCenter(
-                x = (screenWidth * 0.3f..screenWidth * 0.7f).random(),
+                x = randFloat(screenWidth * 0.3f, screenWidth * 0.7f),
                 y = -200f,
                 size = 400f,
                 rotation = 0f,
@@ -378,13 +386,13 @@ class GameEngine(
             star.y += star.speed * speedScale
             if (star.y > screenHeight) {
                 star.y = 0f
-                star.x = (0..screenWidth.toInt()).random().toFloat()
+                star.x = Random.nextInt(0, screenWidth.toInt() + 1).toFloat()
             }
         }
     }
 
     private fun updateWeaponFiring(currentTime: Long) {
-        val fireRateModifier = 1.0 - playerUpgrades.fireRateLevel * 0.2
+        val fireRateModifier = 1.0f - playerUpgrades.fireRateLevel * 0.2f
         val effectiveFireRate = (weaponStats.baseFireRate * fireRateModifier).toLong()
 
         if (currentTime - lastFireTime > effectiveFireRate) {
@@ -440,21 +448,21 @@ class GameEngine(
     private fun spawnEnemy() {
         val sizeTier = randomSizeTier()
         val size = when (sizeTier) {
-            SizeTier.SMALL -> (40f..60f).random()
-            SizeTier.MEDIUM -> (70f..90f).random()
-            SizeTier.LARGE -> (100f..130f).random()
-            SizeTier.ELITE -> (130f..160f).random()
+            SizeTier.SMALL -> randFloat(40f, 60f)
+            SizeTier.MEDIUM -> randFloat(70f, 90f)
+            SizeTier.LARGE -> randFloat(100f, 130f)
+            SizeTier.ELITE -> randFloat(130f, 160f)
         }
 
         val baseHealth = difficultyScaler.getEnemyHealth()
         val health = if (sizeTier == SizeTier.ELITE) baseHealth + 1 else baseHealth
 
         val enemy = Enemy(
-            x = (size..screenWidth - size).random(),
+            x = randFloat(size, screenWidth - size),
             y = -size,
             size = size,
             speed = 3f * difficultyScaler.getSpeedMultiplier(),
-            type = (0..4).random(),
+            type = Random.nextInt(0, 5),
             timeAlive = 0f,
             rotation = 0f,
             health = health,
@@ -467,15 +475,15 @@ class GameEngine(
     }
 
     private fun spawnPowerUp() {
-        val type = PowerUpType.entries.random()
-        val tier = (0..4).random()
+        val type = PowerUpType.entries[Random.nextInt(0, PowerUpType.entries.size)]
+        val tier = Random.nextInt(0, 5)
 
         powerUpSystem.worldPowerUps.add(
             WorldPowerUp(
                 id = System.currentTimeMillis(),
                 type = type,
-                x = (50f..screenWidth - 50f).random(),
-                y = (50f..screenHeight * 0.3f).random(),
+                x = randFloat(50f, screenWidth - 50f),
+                y = randFloat(50f, screenHeight * 0.3f),
                 tier = tier,
                 alive = true
             )
@@ -522,8 +530,11 @@ class GameEngine(
             // Update behavior controller
             enemy.behaviorController?.update(
                 enemy = enemy,
-                player = player,
-                deltaTime = dtSec
+                playerX = player.x,
+                playerY = player.y,
+                deltaTime = dtSec,
+                health = enemy.health,
+                maxHealth = enemy.health
             )
 
             // Apply behavior movement

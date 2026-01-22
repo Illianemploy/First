@@ -15,6 +15,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -467,6 +468,8 @@ data class DebugMetrics(
     var fps: Int = 0,
     var avgFrameTime: Float = 0f,
     var worstFrameTime: Float = 0f,
+    var updateMs: Float = 0f,      // Average update time in ms
+    var drawMs: Float = 0f,        // Average draw time in ms
     var enemyCount: Int = 0,
     var bulletCount: Int = 0,
     var spawnInterval: Long = 0L,
@@ -474,7 +477,9 @@ data class DebugMetrics(
     var enemyHealth: Int = 0,
     var score: Int = 0,
     var currency: Int = 0,
-    var difficultyLevel: Int = 0
+    var difficultyLevel: Int = 0,
+    var bgLayers: Int = 0,         // Background layer count
+    var bgOffset: Float = 0f       // Background scroll offset
 )
 
 // Shop system
@@ -1325,49 +1330,67 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
     var debugTapCount by remember { mutableIntStateOf(0) }
     var lastDebugTap by remember { mutableLongStateOf(0L) }
 
-    // Game loop - measures real delta time for frame-independent movement
+    // Draw time tracking (updated from Canvas block)
+    val drawTimes = remember { mutableListOf<Float>() }
+    var lastDrawTimeNanos by remember { mutableLongStateOf(0L) }
+
+    // Game loop - continuous frame-driven updates using withFrameNanos
     LaunchedEffect(gameState.isAlive) {
         val frameTimes = mutableListOf<Long>()
-        var lastUpdateTime = System.currentTimeMillis()
+        val updateTimes = mutableListOf<Float>()  // Update time in ms
+        var lastFrameNanos = 0L
         var lastDebugUpdate = 0L
 
         while (isActive && gameState.isAlive) {
-            delay(16) // Target ~60 FPS, but actual delta may vary
+            withFrameNanos { frameTimeNanos ->
+                // Calculate delta time from last frame
+                val dtNanos = if (lastFrameNanos > 0L) frameTimeNanos - lastFrameNanos else 16_000_000L
+                lastFrameNanos = frameTimeNanos
+                val dtMs = (dtNanos / 1_000_000L).coerceIn(0L, 50L) // Convert to ms, clamp to 50ms max
 
-            val currentTime = System.currentTimeMillis()
-            val dtMs = (currentTime - lastUpdateTime).coerceIn(0L, 50L) // Clamp to 50ms max (prevent spiral of death)
-            lastUpdateTime = currentTime
+                // Measure update time
+                val updateStartNanos = System.nanoTime()
+                gameEngine.update(dtMs)
+                val updateEndNanos = System.nanoTime()
+                val updateMs = (updateEndNanos - updateStartNanos) / 1_000_000f
 
-            // Track frame time for debug overlay (only if debug is enabled)
-            if (BuildConfig.DEBUG && debugOverlayEnabled) {
-                frameTimes.add(dtMs)
+                // Track metrics (only if debug enabled)
+                if (BuildConfig.DEBUG && debugOverlayEnabled) {
+                    frameTimes.add(dtMs)
+                    updateTimes.add(updateMs)
 
-                // Keep only last 60 frames (1 second at 60 FPS)
-                if (frameTimes.size > 60) {
-                    frameTimes.removeAt(0)
-                }
+                    // Keep only last 60 frames (rolling average)
+                    if (frameTimes.size > 60) {
+                        frameTimes.removeAt(0)
+                        updateTimes.removeAt(0)
+                    }
 
-                // Update debug metrics every 250ms
-                if (currentTime - lastDebugUpdate > 250) {
-                    debugMetrics = debugMetrics.copy(
-                        fps = if (frameTimes.isNotEmpty()) (1000f / frameTimes.average().toFloat()).toInt() else 0,
-                        avgFrameTime = frameTimes.average().toFloat(),
-                        worstFrameTime = frameTimes.maxOrNull()?.toFloat() ?: 0f,
-                        enemyCount = gameState.enemies.size,
-                        bulletCount = gameState.bullets.size,
-                        spawnInterval = 0L,
-                        speedMultiplier = 0f,
-                        enemyHealth = 0,
-                        score = gameState.score,
-                        currency = gameState.earnedCurrency,
-                        difficultyLevel = gameState.difficultyLevel
-                    )
-                    lastDebugUpdate = currentTime
+                    // Update debug overlay strings only once per second
+                    val currentTime = System.currentTimeMillis()
+                    if (currentTime - lastDebugUpdate > 1000) {
+                        val avgDrawMs = if (drawTimes.isNotEmpty()) drawTimes.average().toFloat() else 0f
+
+                        debugMetrics = debugMetrics.copy(
+                            fps = if (frameTimes.isNotEmpty()) (1000f / frameTimes.average().toFloat()).toInt() else 0,
+                            avgFrameTime = frameTimes.average().toFloat(),
+                            worstFrameTime = frameTimes.maxOrNull()?.toFloat() ?: 0f,
+                            updateMs = if (updateTimes.isNotEmpty()) updateTimes.average().toFloat() else 0f,
+                            drawMs = avgDrawMs,
+                            enemyCount = gameState.enemies.size,
+                            bulletCount = gameState.bullets.size,
+                            spawnInterval = 0L,
+                            speedMultiplier = 0f,
+                            enemyHealth = 0,
+                            score = gameState.score,
+                            currency = gameState.earnedCurrency,
+                            difficultyLevel = gameState.difficultyLevel,
+                            bgLayers = 2,  // TODO: Get from backgroundManager
+                            bgOffset = 0f  // TODO: Get from backgroundManager
+                        )
+                        lastDebugUpdate = currentTime
+                    }
                 }
             }
-
-            // Update game engine with real delta time (frame-independent)
-            gameEngine.update(dtMs)
         }
 
         if (!gameState.isAlive) {
@@ -1410,6 +1433,9 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                     }
                 }
         ) {
+            // Measure draw time (only if debug enabled)
+            val drawStartNanos = if (BuildConfig.DEBUG && debugOverlayEnabled) System.nanoTime() else 0L
+
             // Draw parallax backgrounds: scrolling stars (back) → static planet (front)
             backgroundManager.draw(this)
 
@@ -1453,6 +1479,18 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
             // Draw player
             if (gameState.isAlive) {
                 drawPlayer(gameState.player, playerSprite)
+            }
+
+            // Record draw time (only if debug enabled)
+            if (BuildConfig.DEBUG && debugOverlayEnabled && drawStartNanos > 0L) {
+                val drawEndNanos = System.nanoTime()
+                val drawMs = (drawEndNanos - drawStartNanos) / 1_000_000f
+                drawTimes.add(drawMs)
+
+                // Keep only last 60 frames (rolling average)
+                if (drawTimes.size > 60) {
+                    drawTimes.removeAt(0)
+                }
             }
         }
 
@@ -1582,6 +1620,16 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                         color = if (debugMetrics.worstFrameTime > 33f) Color(0xFFFF0000) else Color.White
                     )
                     Text(
+                        text = "Update: ${String.format("%.2f", debugMetrics.updateMs)}ms",
+                        fontSize = 12.sp,
+                        color = if (debugMetrics.updateMs > 16f) Color(0xFFFF0000) else Color(0xFF00FF00)
+                    )
+                    Text(
+                        text = "Draw: ${String.format("%.2f", debugMetrics.drawMs)}ms",
+                        fontSize = 12.sp,
+                        color = if (debugMetrics.drawMs > 16f) Color(0xFFFF0000) else Color(0xFF00FF00)
+                    )
+                    Text(
                         text = "Enemies: ${debugMetrics.enemyCount}",
                         fontSize = 12.sp,
                         color = Color.White
@@ -1620,6 +1668,11 @@ fun GameScreen(onGameOver: (Int, Int) -> Unit) {
                         text = "Currency: ${debugMetrics.currency} \$M",
                         fontSize = 12.sp,
                         color = Color(0xFF00FF00)
+                    )
+                    Text(
+                        text = "BG layers=${debugMetrics.bgLayers} offset=${String.format("%.1f", debugMetrics.bgOffset)}",
+                        fontSize = 12.sp,
+                        color = Color(0xFF888888)
                     )
                 }
             }

@@ -1,34 +1,23 @@
 # Space Shooter Game
 
-## SIMPLE SETUP - 3 STEPS
+Vibe till we die homies.
+First Project 
 
-### Step 1: Open in Android Studio
-1. Open Android Studio
-2. File → Open
-3. Select: `C:\Users\Max\AndroidStudioProjects\SpaceShooter`
-4. Click OK
+Full speed ahead towards the Singularity!
 
-### Step 2: Wait for Gradle Sync
-- Bottom of screen will show "Syncing..."
-- Wait 2-5 minutes
-- When done, you'll see "Gradle sync completed"
 
-### Step 3: Run the App
-- Click green ▶ Run button
-- Select your device
-- Click OK
+## Development & AI Guidelines
 
-## What You'll See
+This project uses an explicit engineering doctrine to ensure:
+- stable 60fps performance on real devices
+- allocation-free hot paths
+- predictable architecture for future features
 
-A dark blue screen with:
-- "SPACE" in cyan
-- "SHOOTER" in white
-- "Game Ready!" card
-- "START GAME" button
+Before making any code changes (human or AI-assisted), please read:
 
-## If You See "Hello Android"
+- `PROJECT_CONTEXT.md` — project goals, constraints, and feature scope
+- `docs/AI_DEV_PLAYBOOK.md` — workflow and performance rules
+- `docs/HOT_PATHS.md` — performance-critical code paths
 
-1. Uninstall old apps from your phone
-2. Click Run again
+These documents are authoritative.
 
-Package: `com.shooter.space`

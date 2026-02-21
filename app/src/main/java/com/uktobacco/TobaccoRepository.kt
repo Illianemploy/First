@@ -36,24 +36,24 @@ class TobaccoRepository {
 
         // Popular UK rolling tobacco brands
         val tobaccoBrands = listOf(
-            Triple("Amber Leaf", "Amber Leaf", 30g to 17.50),
-            Triple("Amber Leaf", "Amber Leaf", 50g to 28.00),
-            Triple("Golden Virginia", "Golden Virginia", 30g to 18.20),
-            Triple("Golden Virginia", "Golden Virginia", 50g to 29.50),
-            Triple("Cutters Choice", "Cutters Choice", 30g to 16.80),
-            Triple("Cutters Choice", "Cutters Choice", 50g to 27.00),
-            Triple("Drum Original", "Drum", 30g to 17.00),
-            Triple("Drum Original", "Drum", 50g to 27.50),
-            Triple("Old Holborn", "Old Holborn", 30g to 16.50),
-            Triple("Old Holborn", "Old Holborn", 50g to 26.50),
-            Triple("Pall Mall Blue", "Pall Mall", 30g to 16.20),
-            Triple("Pall Mall Blue", "Pall Mall", 50g to 26.00),
-            Triple("Pueblo Blue", "Pueblo", 30g to 18.00),
-            Triple("Bali Shag", "Bali Shag", 40g to 19.50),
-            Triple("Samson Original", "Samson", 30g to 16.00),
-            Triple("JPS Volume Tobacco", "JPS", 50g to 25.80),
-            Triple("Sterling Rolling Tobacco", "Sterling", 30g to 15.80),
-            Triple("Gauloises Blondes", "Gauloises", 30g to 17.80)
+            Triple("Amber Leaf", "Amber Leaf", "30g" to 17.50),
+            Triple("Amber Leaf", "Amber Leaf", "50g" to 28.00),
+            Triple("Golden Virginia", "Golden Virginia", "30g" to 18.20),
+            Triple("Golden Virginia", "Golden Virginia", "50g" to 29.50),
+            Triple("Cutters Choice", "Cutters Choice", "30g" to 16.80),
+            Triple("Cutters Choice", "Cutters Choice", "50g" to 27.00),
+            Triple("Drum Original", "Drum", "30g" to 17.00),
+            Triple("Drum Original", "Drum", "50g" to 27.50),
+            Triple("Old Holborn", "Old Holborn", "30g" to 16.50),
+            Triple("Old Holborn", "Old Holborn", "50g" to 26.50),
+            Triple("Pall Mall Blue", "Pall Mall", "30g" to 16.20),
+            Triple("Pall Mall Blue", "Pall Mall", "50g" to 26.00),
+            Triple("Pueblo Blue", "Pueblo", "30g" to 18.00),
+            Triple("Bali Shag", "Bali Shag", "40g" to 19.50),
+            Triple("Samson Original", "Samson", "30g" to 16.00),
+            Triple("JPS Volume Tobacco", "JPS", "50g" to 25.80),
+            Triple("Sterling Rolling Tobacco", "Sterling", "30g" to 15.80),
+            Triple("Gauloises Blondes", "Gauloises", "30g" to 17.80)
         )
 
         val retailers = listOf("Tesco", "Sainsbury's", "Co-op", "Morrisons", "ASDA", "Local Shop")

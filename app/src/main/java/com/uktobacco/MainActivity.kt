@@ -53,8 +53,8 @@ fun TobaccoPricesApp() {
 
     val bottomNavItems = listOf(
         BottomNavItem(Screen.Home, Icons.Filled.Home, "Home"),
-        BottomNavItem(Screen.Brands, Icons.Filled.Business, "Brands"),
-        BottomNavItem(Screen.Favorites, Icons.Filled.Favorite, "Favorites"),
+        BottomNavItem(Screen.Awareness, Icons.Filled.Warning, "Impact"),
+        BottomNavItem(Screen.GlobalPrices, Icons.Filled.Public, "Global"),
         BottomNavItem(Screen.Settings, Icons.Filled.Settings, "Settings")
     )
 

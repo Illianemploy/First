@@ -22,7 +22,8 @@ import com.uktobacco.ui.theme.UberTextSecondary
 fun SettingsScreen(
     onNavigateToProfile: () -> Unit = {},
     onNavigateToGlobalPrices: () -> Unit = {},
-    onNavigateToAwareness: () -> Unit = {}
+    onNavigateToAwareness: () -> Unit = {},
+    onNavigateToFavorites: () -> Unit = {}
 ) {
     var notificationsEnabled by remember { mutableStateOf(true) }
     var autoRefreshEnabled by remember { mutableStateOf(true) }
@@ -70,6 +71,16 @@ fun SettingsScreen(
             modifier = Modifier.padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // Favorites section
+            SettingsSection(title = "Favorites") {
+                SettingsItem(
+                    icon = Icons.Filled.Favorite,
+                    title = "My Favorites",
+                    description = "View your saved products",
+                    onClick = onNavigateToFavorites
+                )
+            }
+
             // Anti-Smoking Tools section
             SettingsSection(title = "Anti-Smoking Tools") {
                 SettingsItem(
